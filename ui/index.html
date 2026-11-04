@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BVE-9100</title>
+<style>
+  :root { --bg:#1b1d20; --panel:#4a4c50; --key:#d9d7cf; --keytext:#1a1a1a; --blue:#8fb6e8; --red:#d9433b; --pink:#d78aa6; --yellow:#e6c33c; --purple:#9c93cf; --gray:#b9b7b0; --dark:#5b5d61; }
+  body { margin:0; background:var(--bg); color:#ddd; font-family: -apple-system, "Helvetica Neue", Arial, sans-serif; }
+  #top { display:flex; align-items:center; gap:14px; padding:8px 14px; background:#111; font-size:13px; }
+  #top b { color:#fff; letter-spacing:1px; }
+  #top input { width:140px; background:#222; color:#eee; border:1px solid #555; padding:3px 6px; font-family:monospace; }
+  #top button { background:#333; color:#eee; border:1px solid #666; padding:3px 10px; cursor:pointer; }
+  #screenwrap { display:flex; justify-content:center; padding:10px; background:#000; }
+  canvas#screen { image-rendering: pixelated; border:6px solid #2a2a2a; border-radius:6px; }
+  #kbd { background:var(--panel); margin:10px auto; padding:14px 16px 18px; border-radius:10px; width:max-content; user-select:none;
+         box-shadow: 0 10px 30px #000 inset, 0 2px 0 #666; }
+  #kbd .brand { color:#eee; font-weight:700; letter-spacing:2px; font-size:14px; margin:0 0 6px 4px; display:flex; justify-content:space-between; width:1340px; }
+  .blocks { display:flex; gap:18px; align-items:flex-start; }
+  .block { display:flex; flex-direction:column; gap:5px; }
+  .row { display:flex; gap:5px; height:46px; }
+  .key { position:relative; width:52px; height:46px; border-radius:4px; background:var(--key); color:var(--keytext); cursor:pointer;
+         box-shadow: 0 3px 0 #777, 0 4px 4px #0008; display:flex; flex-direction:column; justify-content:center; align-items:center; text-align:center;
+         font-size:9px; line-height:1.05; padding:2px; box-sizing:border-box; }
+  .key:active, .key.down { transform: translateY(2px); box-shadow: 0 1px 0 #777; }
+  .key .t { font-size:8px; color:#333; white-space:pre-line; }
+  .key .m { font-size:11px; font-weight:600; white-space:pre-line; }
+  .key .s { font-size:6.5px; color:#444; position:absolute; bottom:1px; left:0; right:0; }
+  .key.blue { background:var(--blue); } .key.red { background:var(--red); color:#fff; } .key.red .t,.key.red .s { color:#fdd; }
+  .key.pink { background:var(--pink); } .key.yellow { background:var(--yellow); } .key.purple { background:var(--purple); }
+  .key.gray { background:var(--gray); } .key.dark { background:var(--dark); color:#eee; } .key.dark .t { color:#ccc; }
+  .key.w15 { width:80px; } .key.w2 { width:109px; } .key.w25 { width:137px; } .key.w9 { width:500px; } .key.tall { height:97px; }
+  .key.gap { visibility:hidden; }
+  .key.unv::after { content:"?"; position:absolute; top:1px; right:3px; font-size:8px; color:#a33; }
+  .key.held { outline:2px solid #ffeb3b; }
+  .dial { width:170px; height:170px; border-radius:50%; background: radial-gradient(circle at 40% 35%, #555, #0d0d0d 70%); margin:6px auto; box-shadow: 0 6px 12px #0009; position:relative; }
+  .dial::after { content:""; position:absolute; left:50%; top:12px; width:8px; height:8px; margin-left:-4px; border-radius:50%; background:#999; }
+  .ledbar { width:150px; height:34px; background:#111; border-radius:3px; margin:4px auto; color:#ccc; font-size:9px; text-align:center; padding-top:3px; }
+  .ledbar i { display:inline-block; width:4px; height:4px; margin:1px; background:#2c2; }
+</style>
+</head>
+<body>
+<div id="top">
+  <b>SONY BVE-9100</b>
+  <span id="status">connecting…</span>
+  <label>raw bytes (hex): <input id="raw" placeholder="82 03 57 00 56 53"></label><button id="sendraw">send</button>
+  <label><input type="checkbox" id="physkb" checked> type on this keyboard</label>
+  <span style="margin-left:auto;color:#999">hover a key for its wire codes · SHIFT/CTRL arm the next key · without VTR interfaces most editing keys have no visible effect</span>
+</div>
+<div id="screenwrap"><canvas id="screen" width="960" height="580"></canvas></div>
+<div id="kbd">
+  <div class="brand"><span>SONY</span><span>BVE-9100 SYSTEM</span></div>
+  <div class="blocks">
+    <div class="block" id="left"></div>
+    <div class="block" id="main"></div>
+    <div class="block" id="right"></div>
+    <div class="block" id="far">
+      <div class="ledbar">SEARCH<br><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><br><span style="font-size:7px">◀◀ REVERSE &nbsp;&nbsp; FORWARD ▶▶</span></div>
+      <div class="row" id="dialkeys"></div>
+      <div class="dial" title="search dial (not emulated yet)"></div>
+    </div>
+  </div>
+</div>
+<script>
+// ---------------------------------------------------------------------------------------------
+// Keyboard layout (BKE-9400A, transcribed from photos).
+// Every key is described by the *function names* of its legends: main legend = plain press,
+// top legend = SHIFT, bottom legend = CTRL.  SHIFT and CTRL are resolved inside the keyboard:
+// each combination has its own wire code.  WIRE below is the factory key-assignment table
+// (CMNDB 0xD0096A44, names from the KEY ASSIGN table at 0xD0099544; see tools/keynames.py and
+// docs/keyboard-codes.md).  A wire code is a plain byte, or "80 xx" / "81 xx" for prefixed keys.
+// ---------------------------------------------------------------------------------------------
+const WIRE = {
+"#1":"b7","#2":"b8","*":"80 2a","+":"2b","-":"2d","/":"80 2f","0":"30","00":"80 3a","1":"31","1ST - ED":"15",
+"2":"32","3":"33","4":"34","5":"35","6":"36","7":"37","8":"38","9":"39","=":"80 3d","A1":"69","A2":"6f","A3":"49","A4":"4f",
+"ACT TRACK":"4e","ALL R":"a2","ALL STOP":"20","APPEND":"94","ARCHIVE":"80 84","ARITH":"80 7d","ASMBL":"55","AUD ASIGN":"80 83",
+"AUTO REC":"45","AUTO SCROL":"80 8b","AUX":"59","AUX1":"d7","AUX2":"d8","BACK SCROL":"9b","BACK-DUR":"3d","BACK-IN":"4b",
+"BACK-OUT":"4c","BAK AUX":"19","BANK BS":"1e","BANK FS":"1c","BLACK":"d9","BLOCK":"80 41","BS":"5e","CACHE MNG":"80 91",
+"CC MEM":"80 89","CLEAN":"80 4c","CLEAR":"80 63","CLR 1":"80 23","CLR ALL":"80 a3","COPY":"97","CRCT":"24","CREAT EVENT":"80 09",
+"CTL+ALLSTOP":"a8","CTL+CUT":"10","CTL+DISS":"a5","CTL+DOWN":"80 a6","CTL+ENTER":"aa","CTL+F1":"80 98","CTL+F2":"80 99",
+"CTL+F3":"80 9a","CTL+F4":"80 9b","CTL+F5":"80 9c","CTL+F6":"80 9d","CTL+F7":"80 9e","CTL+F8":"80 9f","CTL+LEFT":"80 a5",
+"CTL+RETURN":"a9","CTL+RIGHT":"80 a7","CTL+UP":"80 a4","CURSOR DOWN":"80 26","CURSOR LEFT":"80 25","CURSOR UP":"80 24",
+"CURSORRIGHT":"80 27","CUT":"70","DEL":"26","DEL EVENT":"80 07","DISK":"7f","DISP PF":"80 96","DISS":"60","DMC":"ef",
+"DMC MEM":"80 49","DMC RANGE":"80 45","DME LOCAL":"80 92","EDIT":"80 01","EFF (PVW)":"80 86","EFF (XPT)":"b9","EJECT":"02",
+"ENTER":"0a","F/TC":"80 3b","F1":"80 18","F2":"80 19","F3":"80 1a","F4":"80 1b","F5":"80 1c","F6":"80 1d","F7":"80 1e","F8":"80 1f",
+"FF":"78","FREEZE-OFF":"1a","FREEZE-ON":"18","FS":"5c","GAP":"80 0c","GO TO":"74","GPI":"79","H CACHE PVW":"52","INIT":"e0",
+"INSRT":"25","JOG":"ee","KEY":"3a","LAST EDIT":"29","LAST MARK":"9c","LAST-X":"80 6f","LEARN":"a1","LOAD EDL":"21",
+"LOAD PPF":"80 8e","LOAD SSU":"80 4e","LOAD TAPE":"80 11","LRN PF":"80 93","MA/SL":"80 02","MAINTENANCE":"1f","MAN":"5d",
+"MAN-R":"7d","MARK-CONST":"2e","MARK-DLY":"3c","MARK-IN":"6d","MARK-OUT":"2c","MARK-SPLIT":"4d","MARK-USR":"3e","MEM JOG":"ae",
+"MEM PLAY":"16","MIXER LOCAL":"80 52","MOD EDL":"23","MOD EVENT":"80 08","MONI-A1":"fa","MONI-A2":"fb","MONI-A3":"fc",
+"MONI-A4":"fd","MONI-AUX1":"f7","MONI-AUX2":"f8","MONI-BLACK":"f9","MONI-P1":"f1","MONI-P2":"f2","MONI-P3":"f3","MONI-P4":"f4",
+"MONI-P5":"f5","MONI-P6":"f6","MONI-R":"f0","MOVE":"27","MPPVW":"51","MRK SPD":"a7","MULTI-EDL":"80 0f","MULTI-PVW":"c1",
+"MULTI-SCRPD":"9e","MXMEM":"80 47","NO":"80 21","NOTE":"28","OUT":"80 46","P-LEARN":"11","P-PVW":"71","P1":"61","P10":"06",
+"P11":"07","P12":"08","P2":"73","P3":"64","P4":"66","P5":"67","P6":"68","P7":"01","P8":"13","P9":"04","PF1":"80 13","PF2":"80 14",
+"PF3":"80 15","PF4":"80 16","PF5":"80 53","PF6":"80 54","PF7":"80 55","PF8":"80 56","PGM PLAY":"80 85","PLAY":"76","PLAY +":"58",
+"PLAY -":"5a","PREREAD":"09","PREROLL":"14","PREVIEW":"e1","PTNKY":"2a","QUICK-TRACE":"80 10","R":"e2","R-PVW":"77","REC":"05",
+"REC OFF":"65","RECAL SCROL":"90","RECAL SEGMT":"9f","RECAL-CONST":"2f","RECALL":"a4","REEL":"80 03","RENUM":"80 4a",
+"REPLAY":"72","RET":"0d","REW":"7a","S QUICK PVW":"17","SAVE":"7e","SAVE EDL":"22","SAVE SSU":"80 0e","SCAN":"56",
+"SCROL":"80 0b","SCRPD":"80 06","SET DUR":"3b","SET IN":"6b","SET OUT":"6c","SET UP":"80 4f","SFT+0":"80 70","SFT+1":"80 71",
+"SFT+2":"80 72","SFT+3":"80 73","SFT+4":"80 74","SFT+5":"80 75","SFT+6":"80 76","SFT+7":"80 77","SFT+8":"80 78","SFT+9":"80 79",
+"SFT+ALLSTOP":"c8","SFT+DOWN":"80 66","SFT+ENTER":"ca","SFT+LEFT":"80 65","SFT+RETURN":"c9","SFT+RIGHT":"80 67","SFT+UP":"80 64",
+"SHTL":"ed","SLOW":"62","SORT":"80 4b","SPEED":"4a","SPLIT":"6a","STANDBY OFF":"03","STILL":"63","STOP":"43","STOP/START":"e3",
+"STOR ED":"93","STORE CONST":"3f","SUPER":"ba","SWER LOCAL":"80 12","SWMEM":"80 48","SWPVW":"57","SY-GR":"80 05","SY-TIME":"0b",
+"SYNC JOG":"ce","SYNC PLAY":"54","TEST":"80 4d","TIME TRACK":"6e","TMP_R":"80 04","TMR-RESET":"80 8f","TRACE":"80 50",
+"TRACK SCROL":"0e","U-BIT":"80 44","UNLOAD TAPE":"80 51","V":"75","WIPE":"5b","XCHG":"7c","XPT-ASSIGN":"80 43","YES":"80 22",
+};
+// K(main legend, plain function, {t: top legend, shift: SHIFT function, s: bottom legend, ctrl: CTRL function,
+//   c: colour class, w: width class, mod: 'shift'|'ctrl'})
+const K = (m, fn, o={}) => Object.assign({m, fn}, o);
+const G = (w) => K("","",{c:"gap",w});
+const LEFT = [
+  [K("Q-TRC","QUICK-TRACE",{t:"TRACE"}), K("LOAD","LOAD TAPE",{t:"UNLOD\nTAPE",s:"CACH MNG",ctrl:"CACHE MNG"}), K("SWER","SWER LOCAL",{t:"MIXER\nLOCAL",shift:"MIXER LOCAL",s:"DME",ctrl:"DME LOCAL"})],
+  [K("TEST","TEST",{c:"gray"}), K("SAVE","SAVE SSU",{t:"LOAD\nSSU",shift:"LOAD SSU",s:"LOAD PPF",ctrl:"LOAD PPF"}), K("MULTI\nEDL","MULTI-EDL",{t:"SETUP",shift:"SET UP",s:"T-RESET",ctrl:"TMR-RESET"})],
+  [K("RENUM","RENUM",{c:"blue"}), K("SCROL","SCROL",{t:"SORT",shift:"SORT",c:"blue",s:"AUT-SCRL",ctrl:"AUTO SCROL"}), K("GAP","GAP",{t:"CLEAN",shift:"CLEAN",c:"blue"})],
+  [K("DEL\nEVENT","DEL EVENT",{t:"MXMEM",shift:"MXMEM"}), K("MOD\nEVENT","MOD EVENT",{t:"SWMEM",shift:"SWMEM"}), K("CREAT\nEVENT","CREAT EVENT",{t:"DMMEM",shift:"DMC MEM",s:"CCMEM",ctrl:"CC MEM"})],
+  [K("TMP-R","TMP_R",{t:"U-BIT",shift:"U-BIT",s:"ARCHIVE",ctrl:"ARCHIVE"}), K("SY-GR","SY-GR",{t:"DMC\nRANGE",shift:"DMC RANGE",s:"PGM PLAY",ctrl:"PGM PLAY"}), K("SCRPD","SCRPD",{t:"OUT",shift:"OUT",s:"EFF",ctrl:"EFF (PVW)"})],
+  [K("EDIT#","EDIT",{t:"BLOCK",shift:"BLOCK"}), K("MA/SL","MA/SL"), K("REEL","REEL",{t:"XPT\nASIGN",shift:"XPT-ASSIGN",s:"AUDIO",ctrl:"AUD ASIGN"})],
+];
+const MAIN = [
+  [G("w15"), ...[1,2,3,4,5,6,7,8].map(i=>K("F"+i, "F"+i, {w:"",ctrl:"CTL+F"+i})), G(""), G("")],
+  [G("w15"), K("R","MONI-R",{s:"ALL R",ctrl:"ALL R"}), K("P1","MONI-P1",{s:"P7",ctrl:"P7"}), K("P2","MONI-P2",{s:"P8",ctrl:"P8"}), K("P3","MONI-P3",{s:"P9",ctrl:"P9"}), K("P4","MONI-P4",{s:"P10",ctrl:"P10"}), K("P5","MONI-P5",{s:"P11",ctrl:"P11"}), K("P6","MONI-P6",{s:"P12",ctrl:"P12"}),
+   K("AUX1","MONI-AUX1",{s:"#1",ctrl:"#1"}), K("AUX2","MONI-AUX2",{s:"#2",ctrl:"#2"}), K("BLACK","MONI-BLACK",{s:"EFF",ctrl:"EFF (XPT)"}), G(""), K("A1","MONI-A1",{s:"SUPER",ctrl:"SUPER"}), K("A2","MONI-A2"), K("A3","MONI-A3"), K("A4","MONI-A4")],
+  [K("INIT","INIT",{c:"gray"}), K("1","1",{t:"LOAD\nEDL",shift:"LOAD EDL",c:"blue"}), K("2","2",{t:"SAVE\nEDL",shift:"SAVE EDL",c:"blue"}), K("3","3",{t:"MOD\nEDL",shift:"MOD EDL",c:"red",s:"STOR ED",ctrl:"STOR ED"}),
+   K("4","4",{t:"CRCT",shift:"CRCT",s:"APPEND",ctrl:"APPEND"}), K("5","5",{t:"INSRT",shift:"INSRT",c:"blue"}), K("6","6",{t:"DEL",shift:"DEL",c:"blue"}), K("7","7",{t:"MOVE",shift:"MOVE",c:"blue",s:"COPY",ctrl:"COPY"}),
+   K("8","8",{t:"NOTE",shift:"NOTE"}), K("9","9",{t:"LAST\nEDIT",shift:"LAST EDIT",c:"blue"}), K("0","0",{t:"RECAL",shift:"RECALL",c:"blue",s:"RCL SCR",ctrl:"RECAL SCROL"}), K("-","-",{t:"+",shift:"+"}),
+   K("BS","BS",{t:"SAVE",shift:"SAVE",c:"blue",s:"BANK-BS",ctrl:"BANK BS"}), K("FS","FS",{t:"XCHG",shift:"XCHG",c:"blue",s:"BANK-FS",ctrl:"BANK FS"}), K("RET","RET",{shift:"SFT+RETURN",ctrl:"CTL+RETURN"})],
+  [K("PREVIEW","PREVIEW",{t:"CAPS\nMULTI-PVW",shift:"MULTI-PVW",w:"w15",s:"LEARN",ctrl:"LEARN"}), K("P-PVW","P-PVW",{t:"Q\nMPPVW",shift:"MPPVW",s:"P-LRN",ctrl:"P-LEARN"}), K("R-PVW","R-PVW",{t:"W\nSWPVW",shift:"SWPVW",s:"SQ-PVW",ctrl:"S QUICK PVW"}),
+   K("REC\nOFF","REC OFF",{t:"E\nAUTO\nREC",shift:"AUTO REC",c:"red",s:"REC",ctrl:"REC"}), K("RE-\nPLAY","REPLAY",{t:"R\nHCPVW",shift:"H CACHE PVW"}), K("GO TO","GO TO",{t:"T\nSYNC-\nPLAY",shift:"SYNC PLAY",s:"PREROLL",ctrl:"PREROLL"}),
+   K("GPI","GPI",{t:"Y\nAUX",shift:"AUX",c:"purple",s:"BAK AUX",ctrl:"BAK AUX"}), K("V","V",{t:"U\nASMBL",shift:"ASMBL",c:"purple",s:"1ST-ED",ctrl:"1ST - ED"}), K("A1","A1",{t:"I\nA3",shift:"A3",c:"purple",s:"PREREAD",ctrl:"PREREAD"}),
+   K("A2","A2",{t:"O\nA4",shift:"A4",c:"purple"}), K("CUT","CUT",{t:"P",c:"pink",ctrl:"CTL+CUT"}), K("DISS","DISS",{c:"pink",ctrl:"CTL+DISS"}), K("WIPE","WIPE",{c:"pink"}), K("ENTER","ENTER",{w:"w15",cls:"tall",shift:"SFT+ENTER",ctrl:"CTL+ENTER"})],
+  [K("CTRL","",{c:"red",mod:"ctrl"}), K("R","R",{c:"blue",s:"ALL R",ctrl:"ALL R"}), K("P1","P1",{t:"A",c:"blue",s:"P7",ctrl:"P7"}), K("P2","P2",{t:"S",c:"blue",s:"P8",ctrl:"P8"}),
+   K("P3","P3",{t:"D",c:"blue",s:"P9",ctrl:"P9"}), K("P4","P4",{t:"F",c:"blue",s:"P10",ctrl:"P10"}), K("P5","P5",{t:"G",c:"blue",s:"P11",ctrl:"P11"}), K("P6","P6",{t:"H",c:"blue",s:"P12",ctrl:"P12"}),
+   K("SPLIT","SPLIT",{t:"J\nSPEED",shift:"SPEED"}), K("BACK\nIN SET","SET IN",{t:"K",shift:"BACK-IN",c:"yellow",s:"SY-TIME",ctrl:"SY-TIME"}), K("BACK\nOUT SET","SET OUT",{t:"L",shift:"BACK-OUT",c:"yellow"}),
+   K("BACK\nDUR SET","SET DUR",{t:";",shift:"BACK-DUR",s:"BAK SCR",ctrl:"BACK SCROL"}), K("KEY","KEY",{t:":\nPTNKY",shift:"PTNKY",c:"pink"}), K("MAN","MAN",{t:"MAN-R",shift:"MAN-R",c:"pink"})],
+  [K("SHIFT","",{w:"w2",mod:"shift"}), K("REW","REW",{t:"Z\nPLAY-",shift:"PLAY -",s:"FRZ OFF",ctrl:"FREEZE-OFF"}), K("FF","FF",{t:"X\nPLAY+",shift:"PLAY +",s:"FRZ ON",ctrl:"FREEZE-ON"}), K("STILL","STILL",{t:"C\nSTOP",shift:"STOP",s:"STB OFF",ctrl:"STANDBY OFF"}),
+   K("PLAY","PLAY",{t:"V\nSCAN",shift:"SCAN",s:"MEM PLAY",ctrl:"MEM PLAY"}), K("SLOW","SLOW",{t:"B",s:"EJECT",ctrl:"EJECT"}), K("ACT\nTRACK\nTIME","TIME TRACK",{t:"N",shift:"ACT TRACK",s:"TRK SCR",ctrl:"TRACK SCROL"}),
+   K("SPLIT\nMARK IN","MARK-IN",{t:"M",shift:"MARK-SPLIT",c:"yellow",s:"MRK SPD",ctrl:"MRK SPD"}), K("K-DLY\nMARK\nOUT","MARK-OUT",{t:",",shift:"MARK-DLY",c:"yellow",s:"LST MARK",ctrl:"LAST MARK"}), K("U-BIT\nMARK\nCONST","MARK-CONST",{t:".",shift:"MARK-USR",c:"blue",s:"M-SCRPD",ctrl:"MULTI-SCRPD"}),
+   K("STORE\nCONST\nRECAL","RECAL-CONST",{t:"/",shift:"STORE CONST",c:"blue",s:"RCL SEG",ctrl:"RECAL SEGMT"}), K("DISK","DISK",{s:"MAINTE",ctrl:"MAINTENANCE"}), K("SHIFT","",{w:"w2",mod:"shift"})],
+  [G("w25"), K("ALL STOP","ALL STOP",{w:"w9",c:"gray",shift:"SFT+ALLSTOP",ctrl:"CTL+ALLSTOP"}), K("STP/\nSTRT","STOP/START",{c:"gray",w:"w15"})],
+];
+const RIGHT = [
+  [K("PF1","PF1",{t:"PF5",shift:"PF5",s:"LRN PF",ctrl:"LRN PF"}), K("PF2","PF2",{t:"PF6",shift:"PF6"}), K("PF3","PF3",{t:"PF7",shift:"PF7"}), K("PF4","PF4",{t:"PF8",shift:"PF8",s:"DISP PF",ctrl:"DISP PF"})],
+  [K("NO","NO",{c:"pink"}), K("↑","CURSOR UP",{shift:"SFT+UP",ctrl:"CTL+UP"}), K("YES","YES",{c:"pink"}), K("CLR1","CLR 1",{t:"CLEAR",shift:"CLEAR",s:"CLR ALL",ctrl:"CLR ALL"})],
+  [K("←","CURSOR LEFT",{shift:"SFT+LEFT",ctrl:"CTL+LEFT"}), K("↓","CURSOR DOWN",{shift:"SFT+DOWN",ctrl:"CTL+DOWN"}), K("→","CURSORRIGHT",{shift:"SFT+RIGHT",ctrl:"CTL+RIGHT"}), K("=","=",{t:"ARITH",shift:"ARITH",c:"blue"})],
+  [K("7","7",{shift:"SFT+7"}), K("8","8",{shift:"SFT+8"}), K("9","9",{shift:"SFT+9"}), K("/","/",{t:"LASTX",shift:"LAST-X",c:"blue"})],
+  [K("4","4",{shift:"SFT+4"}), K("5","5",{shift:"SFT+5"}), K("6","6",{shift:"SFT+6"}), K("*","*",{c:"blue"})],
+  [K("1","1",{shift:"SFT+1"}), K("2","2",{shift:"SFT+2"}), K("3","3",{shift:"SFT+3"}), K("+","+",{c:"blue"})],
+  [K("0","0",{shift:"SFT+0"}), K("00","00"), K("F/TC","F/TC"), K("-","-")],
+];
+const DIAL = [K("SHTL","SHTL"), K("JOG","JOG",{t:"SYNC",shift:"SYNC JOG",s:"MEM JOG",ctrl:"MEM JOG"}), K("DMC","DMC")];
+
+let shift=false, ctrl=false;
+function mk(k){
+  const d=document.createElement('div');
+  d.className='key '+(k.c||'')+' '+(k.w||'')+' '+(k.cls||'');
+  d.innerHTML=(k.t?`<div class="t">${k.t}</div>`:'')+`<div class="m">${k.m}</div>`+(k.s?`<div class="s">${k.s}</div>`:'');
+  const wire=(fn)=>fn?WIRE[fn]:null;
+  const tip=[]; if(k.fn) tip.push(`${k.fn} = ${wire(k.fn)}`); if(k.shift) tip.push(`SHIFT: ${k.shift} = ${wire(k.shift)}`); if(k.ctrl) tip.push(`CTRL: ${k.ctrl} = ${wire(k.ctrl)}`);
+  d.title=k.mod?`hold ${k.mod.toUpperCase()} for the next key`:tip.join('\n');
+  d.onclick=()=>{
+    if(k.mod){ if(k.mod==='shift'){shift=!shift;} else {ctrl=!ctrl;} refreshMods(); return; }
+    let fn=k.fn;
+    if(ctrl && k.ctrl) fn=k.ctrl; else if(shift && k.shift) fn=k.shift;
+    shift=false; ctrl=false; refreshMods();
+    const code=wire(fn); if(!code) return;
+    send(code);
+    d.classList.add('down'); setTimeout(()=>d.classList.remove('down'),150);
+  };
+  d.dataset.mod=k.mod||'';
+  return d;
+}
+function refreshMods(){ document.querySelectorAll('.key').forEach(e=>{ if(e.dataset.mod==='shift') e.classList.toggle('held',shift); if(e.dataset.mod==='ctrl') e.classList.toggle('held',ctrl);}); }
+function fill(id, rows){ const b=document.getElementById(id); rows.forEach(r=>{ const row=document.createElement('div'); row.className='row'; r.forEach(k=>row.appendChild(mk(k))); b.appendChild(row); }); }
+fill('left',LEFT); fill('main',MAIN); fill('right',RIGHT); DIAL.forEach(k=>document.getElementById('dialkeys').appendChild(mk(k)));
+
+function log(s){ /* key traffic is not shown in the UI */ }
+async function send(hex){ log('key '+hex); try{ await fetch('/key',{method:'POST',body:hex}); }catch(e){ log('send failed: '+e); } }
+document.getElementById('sendraw').onclick=()=>send(document.getElementById('raw').value);
+document.getElementById('raw').addEventListener('keydown',e=>{ if(e.key==='Enter') send(e.target.value); e.stopPropagation(); });
+// physical keyboard -> wire codes
+const FK={F1:'F1',F2:'F2',F3:'F3',F4:'F4',F5:'F5',F6:'F6',F7:'F7',F8:'F8',F9:'PF1',F10:'PF2',F11:'PF3',F12:'PF4',Enter:'ENTER',Backspace:'BS',Tab:'FS',Escape:'INIT',ArrowUp:'CURSOR UP',ArrowDown:'CURSOR DOWN',ArrowLeft:'CURSOR LEFT',ArrowRight:'CURSORRIGHT',Home:'RET',PageUp:'YES',PageDown:'NO',Delete:'CLR 1'};
+const PHYS_SHIFT={'1':'LOAD EDL','2':'SAVE EDL','3':'MOD EDL','4':'CRCT','5':'INSRT','6':'DEL','7':'MOVE','8':'NOTE','9':'LAST EDIT','0':'RECALL'};
+const PHYS_CTRL={'3':'STOR ED','4':'APPEND','7':'COPY','0':'RECAL SCROL','e':'REC','t':'PREROLL','y':'BAK AUX','u':'1ST - ED','i':'PREREAD','q':'P-LEARN','w':'S QUICK PVW','a':'P7','s':'P8','d':'P9','f':'P10','g':'P11','h':'P12','k':'SY-TIME','z':'FREEZE-OFF','x':'FREEZE-ON','c':'STANDBY OFF','v':'MEM PLAY','b':'EJECT','n':'TRACK SCROL','m':'MRK SPD',',':'LAST MARK','.':'MULTI-SCRPD','/':'RECAL SEGMT','p':'CTL+CUT',' ':'CTL+ALLSTOP',Enter:'CTL+ENTER',ArrowUp:'CTL+UP',ArrowDown:'CTL+DOWN',ArrowLeft:'CTL+LEFT',ArrowRight:'CTL+RIGHT'};
+document.addEventListener('keydown',e=>{
+  if(!document.getElementById('physkb').checked) return;
+  if(e.target.tagName==='INPUT') return;
+  let code=null;
+  if(e.ctrlKey && PHYS_CTRL[e.key]) code=WIRE[PHYS_CTRL[e.key]];
+  else if(e.ctrlKey && PHYS_CTRL[e.key.toLowerCase()]) code=WIRE[PHYS_CTRL[e.key.toLowerCase()]];
+  else if(e.ctrlKey && /^F[1-8]$/.test(e.key)) code=WIRE['CTL+'+e.key];
+  else if(e.shiftKey && PHYS_SHIFT[e.key]) code=WIRE[PHYS_SHIFT[e.key]];
+  else if(FK[e.key]) code=WIRE[FK[e.key]];
+  else if(e.key.length===1 && e.key.charCodeAt(0)>=0x20 && e.key.charCodeAt(0)<0x7f) code=e.key.charCodeAt(0).toString(16);
+  if(code){ e.preventDefault(); send(code); }
+});
+
+// ---------------------------------------------------------------------------------------------
+// Screen rendering: 80 x 29 cells of [char, font bank, attribute]. attribute: bits 0-3 colour,
+// bit 14 blink, bit 15 reverse. Font bank 0: ASCII plus line-drawing codes >= 0x80; bank 7:
+// 0x80-0xBF double-width glyph (left half, ASCII = code-0x60), 0xC0-0xFF right half, <0x80 halftone.
+// ---------------------------------------------------------------------------------------------
+const CW=12, CH=20, cv=document.getElementById('screen'), ctx=cv.getContext('2d');
+const PAL=['#8c8c8c','#2244ee','#22cc33','#22cccc','#ee3322','#dd33dd','#eedd22','#eeeeee','#226622','#6688aa','#ee6633','#ffbbcc','#88aa44','#88ccff','#ffff44','#ffffff'];
+// line-drawing glyphs: segments l,r,u,d (centre) ; d = dotted horizontal, D = double/thick
+const LINES={0x82:'lr', 0x86:'lr', 0x89:'ud', 0x90:'ud', 0xd6:'rd', 0xd7:'ld', 0xd8:'ru', 0xd9:'lu', 0xd3:'lrd', 0xd2:'lru', 0xd4:'udr', 0xd5:'udl', 0xd1:'lrud',
+  0x80:'lr',0x81:'lr',0x83:'lr',0x84:'lr',0x85:'lr',0x87:'lr',0x88:'ud',0x8a:'ud',0x8b:'ud'};
+function drawLine(x,y,segs){
+  ctx.beginPath(); const cx=x+CW/2, cy=y+CH/2;
+  if(segs.includes('l')) {ctx.moveTo(x,cy); ctx.lineTo(cx,cy);} if(segs.includes('r')) {ctx.moveTo(cx,cy); ctx.lineTo(x+CW,cy);}
+  if(segs.includes('u')) {ctx.moveTo(cx,y); ctx.lineTo(cx,cy);} if(segs.includes('d')) {ctx.moveTo(cx,cy); ctx.lineTo(cx,y+CH);}
+  ctx.stroke();
+}
+let blinkPhase=0;
+function render(scr){
+  ctx.fillStyle='#000'; ctx.fillRect(0,0,cv.width,cv.height);
+  ctx.textBaseline='middle'; ctx.lineWidth=2;
+  for(let r=0;r<29;r++){ const row=scr.rows[r]; let c=0;
+    while(c<80){ const [ch,font,attr]=row[c]; const x=c*CW, y=r*CH; const col=PAL[attr&15]||'#fff'; const rev=attr&0x8000, blink=attr&0x4000;
+      let fg=col, bg='#000'; if(rev){fg='#000'; bg=col;} if(blink && blinkPhase){fg=bg;}
+      if(rev && (attr&15)===0) bg='#8c8c8c';
+      if(bg!=='#000'){ ctx.fillStyle=bg; ctx.fillRect(x,y,CW,CH); }
+      ctx.fillStyle=fg; ctx.strokeStyle=fg;
+      if(font===7){
+        if(ch>=0x80 && ch<0xc0){ ctx.font='bold 22px "Menlo","DejaVu Sans Mono",monospace'; ctx.save(); ctx.scale(1.55,1); ctx.fillText(String.fromCharCode(ch-0x60), x/1.55+2, y+CH/2+1); ctx.restore(); c+=2; continue; }
+        if(ch>=0xc0){ c++; continue; }
+        // halftone / logo tile
+        ctx.fillStyle=fg; for(let yy=2;yy<CH;yy+=4) for(let xx=(yy/4%2)*2;xx<CW;xx+=4) ctx.fillRect(x+xx,y+yy,2,2); c++; continue;
+      }
+      if(font!==0){ // other CG banks (5 = small/status font, 8 = frame variants): show printable codes as text, others as a box
+        if(ch>=0x20 && ch<0x7f){ ctx.font='italic 13px "Menlo","DejaVu Sans Mono",monospace'; ctx.fillText(String.fromCharCode(ch), x+1, y+CH/2+1); }
+        else if(ch>=0x80 && LINES[ch]) drawLine(x,y,LINES[ch]);
+        else { ctx.fillStyle='#555'; ctx.fillRect(x+2,y+3,CW-4,CH-6); ctx.fillStyle=fg; ctx.font='9px monospace'; ctx.fillText(ch.toString(16),x+1,y+CH/2); }
+        c++; continue; }
+      if(ch>=0x20 && ch<0x7f){ ctx.font='15px "Menlo","DejaVu Sans Mono","Consolas",monospace'; ctx.fillText(String.fromCharCode(ch), x+1, y+CH/2+1); }
+      else if(ch>=0x80){ const segs=LINES[ch]; if(segs) drawLine(x,y,segs); else { ctx.fillRect(x+4,y+8,4,4); } }
+      c++;
+    }
+  }
+}
+async function tick(){
+  try{ const [s,st]=await Promise.all([fetch('/screen').then(r=>r.json()), fetch('/status').then(r=>r.json())]);
+       render(s);
+       const booting=!st.realtime;
+       document.getElementById('status').textContent=`t=${st.seconds.toFixed(1)}s emulated ${booting?'— BOOTING (fast forward), keys are ignored until the edit page is up':'(real time)'}  LEDs=${st.leds.toString(16)}`;
+       document.getElementById('status').style.color=booting?'#fc6':'#9f9'; }
+  catch(e){ document.getElementById('status').textContent='emulator not reachable: '+e; }
+}
+setInterval(tick,100); setInterval(()=>{blinkPhase^=1;},500); tick();
+</script>
+</body>
+</html>

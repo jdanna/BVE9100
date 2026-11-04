@@ -1,0 +1,127 @@
+#include "dsc63.h"
+extern "C" unsigned int m68k_get_reg(void* context, int reg);
+#define M68K_REG_PC_ID 16
+Dsc63::Dsc63(IrqController* irq) : keyboard("DSC63.KBD", irq, 3), printer("DSC63.PRT", irq, 3), vram_(0x10000, 0), plane2_(0xC000, 0) {
+    keyboard.vec_rx = 0xA0; keyboard.vec_reset = 0xA1; keyboard.vec_tx = 0xA2; keyboard.vec_nop = 0xA3;
+    printer.vec_rx = 0xA4; printer.vec_reset = 0xA5; printer.vec_tx = 0xA6; printer.vec_nop = 0xA3;
+    // Keyboard (BKE-9400A) command blocks start with 0x82; the keyboard answers 0x83 (ACK) / 0x84 (NAK).
+    // Block format: 82 <len> <cmd> <data...> <checksum>. Commands seen: 'W' (0x57) mode set, 'K' (0x4B) key
+    // table download, 'R' (0x52) read a keyboard register/status. Replies: 83 = ACK, 84 = NAK,
+    // 82 <byte> = one data byte (the kernel's krecvdev hands that byte back to the requesting task).
+    keyboard.on_tx = [this](const std::vector<uint8_t>& blk) {
+        if (blk.size() < 3 || blk[0] != 0x82) return;
+        uint8_t cmd = blk[2];
+        if (cmd == 0x52) { uint8_t reg = blk.size() > 3 ? blk[3] : 0; uint8_t v = keyboard_read_reg(reg); keyboard.deliver({0x82, v}); LOGD("KBD: read reg %02x -> %02x\n", reg, v); }
+        else keyboard.deliver({0x83});
+    };
+}
+// Keyboard "register" values returned to 'R' requests. 'Z' (0x5A) is read right after the key tables are
+// loaded; the application compares the high byte of a keyboard-type word against 0x43 ('C').
+uint8_t Dsc63::keyboard_read_reg(uint8_t reg) { if (reg == 0x5A) return kbd_type; return 0; }
+void Dsc63::reset() { keyboard.reset(); printer.reset(); }
+void Dsc63::tick(uint32_t c) { keyboard.tick(c); printer.tick(c); }
+uint8_t Dsc63::read8(uint32_t off) {
+    if (off < 0x10000) return vram_[off];
+    if (off < 0x1C000) return plane2_[off - 0x10000];
+    if (off >= 0x1CA00 && off < 0x1CB00) return keyboard.read8(off - 0x1CA00);
+    if (off >= 0x1CC00 && off < 0x1CD00) return printer.read8(off - 0x1CC00);
+    if (off >= 0x1C800) {
+        if (off == 0x1C9C8 || off == 0x1C9C9) return 0;      // not busy
+        return regs_[off - 0x1C800];
+    }
+    return 0xFF;
+}
+void Dsc63::write8(uint32_t off, uint8_t v) {
+    if (off < 0x10000) { vram_[off] = v; screen_dirty = true; return; }
+    if (off < 0x1C000) { plane2_[off - 0x10000] = v; return; }
+    if (off >= 0x1CA00 && off < 0x1CB00) { keyboard.write8(off - 0x1CA00, v); return; }
+    if (off >= 0x1CC00 && off < 0x1CD00) { printer.write8(off - 0x1CC00, v); return; }
+    if (off >= 0x1C800) {
+        regs_[off - 0x1C800] = v;
+        if (off == 0x1C981) LOGD("DSC63: partition0 start <- %04x (pc %08x)\n", (regs_[0x180] << 8) | v, m68k_get_reg(nullptr, M68K_REG_PC_ID));
+        if (off == 0x1CFFF) screen_dirty = true;
+        else if (off >= 0x1C980 && off < 0x1C9D0) LOGT("DSC63: reg %05x = %02x\n", off, v);
+    }
+}
+uint16_t Dsc63::read16(uint32_t off) { return (uint16_t)((read8(off) << 8) | read8(off + 1)); }
+void Dsc63::write16(uint32_t off, uint16_t v) { write8(off, (uint8_t)(v >> 8)); write8(off + 1, (uint8_t)v); }
+
+std::vector<std::string> Dsc63::render_text() const {
+    std::vector<std::string> out;
+    // Partition 0 start address (default 0): rows are 0x140 bytes
+    uint32_t start = (((uint32_t)regs_[0x180] << 8) | regs_[0x181]) << 2;
+    for (int row = 0; row < 29; row++) {
+        std::string line;
+        for (int col = 0; col < 80; col++) {
+            uint32_t a = (start + row * 0x140 + col * 4) & 0xFFFF;
+            const uint8_t* cell = &vram_[a];
+            if (a + 3 < plane2_.size()) { const uint8_t* p = &plane2_[a]; if (p[1] != 0x20 && (p[0] | p[1])) cell = p; }
+            uint8_t ch = cell[1], font = cell[0] & 0x0F;
+            if (font == 0) line.push_back((ch >= 0x20 && ch < 0x7F) ? (char)ch : (ch == 0 ? ' ' : '.'));
+            else if (ch >= 0x80 && ch < 0xC0) line.push_back((char)(ch - 0x80 + 0x20));
+            else if (ch >= 0xC0) line.push_back(' ');
+            else line.push_back(font == 7 ? '%' : '#');
+        }
+        while (!line.empty() && line.back() == ' ') line.pop_back();
+        out.push_back(line);
+    }
+    return out;
+}
+void Dsc63::dump_screen(FILE* out, bool color) const {
+    uint32_t start = (((uint32_t)regs_[0x180] << 8) | regs_[0x181]) << 2;
+    fprintf(out, "+%s+\n", std::string(80, '-').c_str());
+    for (int row = 0; row < 29; row++) {
+        fputc('|', out);
+        int last_attr = -1;
+        for (int col = 0; col < 80; col++) {
+            uint32_t a = (start + row * 0x140 + col * 4) & 0xFFFF;
+            const uint8_t* cell = &vram_[a];
+            // pop-up plane (0x0D010000) overlays the main plane where it holds a non-blank cell
+            if (a + 3 < plane2_.size()) { const uint8_t* p = &plane2_[a]; if (p[1] != 0x20 && (p[0] | p[1])) cell = p; }
+            uint8_t ch = cell[1];
+            uint8_t font = cell[0] & 0x0F;          // character generator bank (0 = ASCII, others = graphics/large fonts)
+            uint16_t attr = (uint16_t)((cell[2] << 8) | cell[3]);
+            if (color && attr != last_attr) {
+                int c = attr & 0xF; bool rev = attr & 0x8000, blink = attr & 0x4000;
+                static const int pal[16] = {30, 34, 32, 36, 31, 35, 33, 37, 90, 94, 92, 96, 91, 95, 93, 97};
+                fprintf(out, "\033[0;%d%s%sm", pal[c], rev ? ";7" : "", blink ? ";5" : "");
+                last_attr = attr;
+            }
+            // CG bank 7: 0x00-0x7F halftone/graphics tiles, 0x80-0xBF left half of a double-width ASCII glyph
+            // (code - 0x80 + 0x20), 0xC0-0xFF its right half. Other banks: unknown, shown as '#'.
+            if (font == 0) fputc((ch >= 0x20 && ch < 0x7F) ? ch : (ch == 0 ? ' ' : '.'), out);
+            else if (ch >= 0x80 && ch < 0xC0) fputc(ch - 0x80 + 0x20, out);
+            else if (ch >= 0xC0) fputc(' ', out);
+            else fputc(font == 7 ? '%' : '#', out);
+        }
+        if (color) fputs("\033[0m", out);
+        fputs("|\n", out);
+    }
+    fprintf(out, "+%s+\n", std::string(80, '-').c_str());
+}
+
+void Dsc63::save_vram(const std::string& path) const {
+    FILE* f = fopen(path.c_str(), "wb"); if (!f) return;
+    fwrite(vram_.data(), 1, vram_.size(), f); fwrite(plane2_.data(), 1, plane2_.size(), f); fwrite(regs_, 1, sizeof regs_, f); fclose(f);
+    LOGI("DSC63: VRAM dumped to %s (vram 0x10000, plane2 0xC000, regs 0x800)\n", path.c_str());
+}
+
+std::string Dsc63::screen_json() const {
+    std::string out; out.reserve(40000);
+    uint32_t start = partition_start();
+    out += "{\"rows\":[";
+    for (int row = 0; row < 29; row++) {
+        out += row ? ",[" : "[";
+        for (int col = 0; col < 80; col++) {
+            uint32_t a = (start + row * 0x140 + col * 4) & 0xFFFF;
+            const uint8_t* cell = &vram_[a];
+            if (a + 3 < plane2_.size()) { const uint8_t* p = &plane2_[a]; if (p[1] != 0x20 && (p[0] | p[1])) cell = p; }
+            char b[32]; snprintf(b, sizeof b, "%s[%d,%d,%d]", col ? "," : "", cell[1], cell[0] & 0x0F, (cell[2] << 8) | cell[3]);
+            out += b;
+        }
+        out += "]";
+    }
+    char tail[128]; snprintf(tail, sizeof tail, "],\"cursor\":%u,\"ctl\":%u}", (unsigned)(((regs_[0x1A0] << 8) | regs_[0x1A1])), (unsigned)((regs_[0x1C0] << 8) | regs_[0x1C1]));
+    out += tail;
+    return out;
+}

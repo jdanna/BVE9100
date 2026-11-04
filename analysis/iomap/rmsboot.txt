@@ -1,0 +1,39 @@
+##### out/rmsboot.asm
+00020000  fdrws
+000249f0  fdinit, fdrws
+000f4240  tx_cmd
+00100000  fdd_busy
+001e8480  fdinit
+00ff0000  revlong, set_cmd
+0cffffff  LAB_013e86a6
+0d000000  LAB_013e874c, dispinit
+0d00ffff  LAB_013e86a6
+0d010000  dispinit
+0d01c9a0  LAB_013e874c
+0d01c9a2  LAB_013e8140, cursor_co
+0d01c9a4  cursor_co
+0d01c9c0  LAB_013e8140
+0d01c9c8  dispinit
+0d01cffe  LAB_013e8140, LAB_013e874c
+0f007000  LAB_013e8c98, LAB_013e8f04, LAB_013e8f58, LAB_013e90ce, LAB_013e90f0, LAB_013e911c, cmdwait, fbuzywait, fddismou, fdinit, fdrws
+0f007001  fddseek
+0f007002  fddseek, rdwrsec
+0f007003  fddseek, fdinit
+0f008000  LAB_013e8a04, fdma_chg
+0f008001  dma_init, fdma_init
+0f008002  LAB_013e8a04, fdma_len, getdmact
+0f008004  LAB_013e8a04, fdma_adr
+0f008007  LAB_013e8a04, fdma_seg
+0f008008  dcon_off, dcon_on, dcon_ons, fdma_cmd
+0f00800a  fdma_sts
+0f00800b  dmod_hrea, dmod_hwri, dmod_read, dmod_writ, fdma_mod
+0f00800e  dmsk_rst, dmsk_set, fdma_msk
+0f00800f  dreq_rst, dreq_set
+0f009000  hd_wait, rg_read, rg_write
+0f009001  cdb_write, rg_read, rg_write
+0f00a7f9  LAB_013ea6ae, asgetdrv
+0f00a7fe  LAB_013ea6ae
+0f00b000  default, fddismou, fdinit
+0f00b001  LAB_013e8fea, fddismou, fdinit
+0f00c000  LAB_013e89fc, LAB_013e8a60, dmafc, dmahset
+3b9aca00  hds_wait

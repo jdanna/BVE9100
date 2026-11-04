@@ -1,0 +1,93 @@
+##### out/strtup.asm
+00720000  LAB_800067a4
+00770000  kbdrgrw
+00f00001  LAB_80005742, LAB_800057f0
+04000000  LAB_8000242c, LAB_80007f9e, rq8_clos, rq8_dire, rq8_fcpy, rq8_init, rq8_kind, rq8_open, rq8_pack, rq8_read, rq8_rxb, rq8_srch, rq8_wxb, rq8creat, rq8dcnfg, rq8delet, rq8demnt, rq8dstat, rq8gtvol, rq8m
+08000000  netsreq, netutime
+08000001  netsreq
+0cffffff  LAB_80002fe8
+0d000000  LAB_8000316a, LAB_8000335c, LAB_8000339a, LAB_800033d4, LAB_80003478, LAB_800034aa, init_dsc, screen_se
+0d002440  LAB_8000341c, LAB_80003478, LAB_800034aa, LAB_80003542, LAB_80003602
+0d00487f  LAB_80003542
+0d004880  LAB_80003602
+0d0049c0  LAB_80003602
+0d00ffff  LAB_80002fe8
+0d01c980  screen_se
+0d01c982  screen_se
+0d01c984  screen_se
+0d01c986  screen_se
+0d01c990  screen_se
+0d01c992  screen_se
+0d01c994  screen_se
+0d01c996  screen_se
+0d01c9a0  LAB_8000316a
+0d01c9a2  cursor_co
+0d01c9a4  cursor_co
+0d01c9c0  init_dsc
+0d01cffe  LAB_8000316a, LAB_800034f2, LAB_80003592, LAB_8000364a, init_dsc
+0f00a7f9  asgetdrv
+20000000  LAB_80004e6c, LAB_80004f44
+40000000  LAB_80004d76
+6fffa12c  LAB_800052b4, caseD_2, dif_comwr, freefs
+6fffa227  LAB_80001e8c, LAB_80001eb2
+6fffa237  LAB_80001d64, LAB_80001e5e
+6fffa238  LAB_80001d4a, LAB_80001d8a, LAB_80001e44, LAB_80001f10, dscint
+6fffa640  LAB_80007120, LAB_8000719a, LAB_800071f4
+6fffa658  caseD_2
+6fffa664  LAB_80005992
+6fffa670  LAB_80005944
+6fffa680  LAB_800052b4
+6fffa690  LAB_800053d4
+6fffa6a0  LAB_80005358
+6fffa6b0  LAB_8000535e
+6fffa6c0  LAB_800052b4
+6fffa6d0  LAB_800052b4
+6fffa6ea  init_dsc
+6fffa70e  init_dsc
+6fffa72a  init_dsc
+6fffa742  init_dsc
+6fffa766  LAB_80003524, LAB_80003538, LAB_800035e4, LAB_800035f8, init_dsc, screen_se, xy2vram
+6fffa782  init_dsc
+6fffa7c8  LAB_800029c2
+6fffeb48  LAB_8000279e, LAB_8000282e
+6fffec88  LAB_8000279e, LAB_8000282e
+6fffec8c  LAB_80002744, LAB_8000277c
+6fffec90  LAB_8000272c, LAB_80002766, LAB_8000279e, LAB_8000282e
+6fffec98  LAB_8000279e, LAB_8000282e, LAB_80002982, LAB_800029d2, swawoff, swawon
+6ffff644  LAB_8000235c
+6ffff704  LAB_800022ba
+6ffff735  LAB_80002106, clrmsg
+6ffff915  dscint
+6ffffb45  LAB_80000f8c, dscint, prnbot
+6ffffb4f  LAB_80001dd2
+6ffffb59  LAB_80001eb2
+6ffffb63  LAB_80001e8c
+6ffffb6d  LAB_80001d8a
+6ffffb78  dscint
+6ffffb85  LAB_80000f8c
+6ffffb86  LAB_80000e1e
+6ffffb9f  LAB_80000e1e
+6ffffbf0  LAB_80000e1e
+6ffffc00  LAB_80000e1e
+70000000  asgetmap
+7c000000  LAB_80005b1c
+7fff6bd8  LAB_80007014
+7fff6bf8  rq8_fcpy, rq8renam, sdurenam
+7fff6fa0  msdrsmsb, sdu_fcpy
+7fff70f4  LAB_80008c24
+7fff71b4  LAB_80005462, chk_id, dif_comwr, diffread, difvolcp, fs_fcpy, fs_volcp
+7fff7234  msdrsmsb
+7fff729c  hd_fcpy, hd_renam, msd_fcpy, msdrenam
+7fff732e  LAB_80005c72, LAB_80005cd8, LAB_80005e1e, LAB_80005f1c, LAB_80006d1a
+7fff9038  LAB_80007014
+7fff903c  LAB_80007014
+7fff9040  LAB_80007014
+7fffc988  LAB_80002956, LAB_80002b7e, LAB_80002ed6, caseD_1, default
+7fffcff4  LAB_8000279e
+7fffd0b4  LAB_800029d2
+7fffd40b  caseD_1
+7fffd429  LAB_80002ed6
+7fffd440  default
+7fffd514  LAB_80002b7e
+7fffd72a  LAB_80002956
+7fffdab8  LAB_800025a4

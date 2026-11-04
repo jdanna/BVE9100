@@ -1,0 +1,27 @@
+# Host key -> BKE-9400A keyboard wire bytes (hex), used by --tty (built-in defaults are the same).
+# SHIFT and CTRL are resolved inside the keyboard: every key/modifier combination has its own wire code
+# (see docs/keyboard-codes.md for the full table). Typewriter keys send the ASCII code of their legend:
+# lowercase = main legend, uppercase/symbol = top legend (SHIFT). CTRL legends mostly send ASCII control codes
+# (CTRL+E = REC = 05) or 0x9x for the digit row (CTRL+3 = STOR ED = 93).
+ENTER 0a
+Home  0d
+F1    80 18
+F2    80 19
+F3    80 1a
+F4    80 1b
+F5    80 1c
+F6    80 1d
+F7    80 1e
+F8    80 1f
+F9    80 13
+F10   80 14
+F11   80 15
+F12   80 16
+ESC   e0
+UP    80 24
+DOWN  80 26
+LEFT  80 25
+RIGHT 80 27
+PGUP  80 22
+PGDN  80 21
+DEL   80 23
