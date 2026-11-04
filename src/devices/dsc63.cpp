@@ -88,7 +88,7 @@ std::vector<std::string> Dsc63::render_text() const {
             if (a + 3 < plane2_.size()) { const uint8_t* p = &plane2_[a]; if (p[1] != 0x20 && (p[0] | p[1])) cell = p; }
             uint8_t ch = cell[1], font = cell[0] & 0x0F;
             if (font == 0) line.push_back((ch >= 0x20 && ch < 0x7F) ? (char)ch : (ch == 0 ? ' ' : '.'));
-            else if (ch >= 0x80 && ch < 0xC0) line.push_back((char)(ch - 0x80 + 0x20));
+            else if ((font == 2 || font == 6) && ch >= 0x80) line.push_back(ch < 0xC0 ? (char)(ch - 0x60) : ' ');   // double-width serif: left half, right half
             else if (ch >= 0xC0) line.push_back(' ');
             else line.push_back(font == 7 ? '%' : '#');
         }

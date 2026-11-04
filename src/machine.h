@@ -45,6 +45,7 @@ struct MachineConfig {
     bool no_if508 = false;               // omit the IF-508 network board
     int kbd_type = 0x43;                 // byte answered to the keyboard 'R','Z' request
     bool keyassign_default = true;       // HLE: load the application's default key assignment table (as the INIT menu would)
+    bool idle_skip = true;               // tick the devices straight to the next interrupt while the kernel idles (--no-idle-skip)
     std::string keymap;
     int http_port = 0;                   // browser front-end (0 = off)
     std::string ui_root = "ui";
@@ -93,6 +94,9 @@ public:
     bool keyassign_done_ = false;
     Httpd httpd_;
     void hle_keyassign_default();
+    bool cpu_idle();                     // the CPU sits in the kernel's idle loop with no interrupt to take
+    bool idle_loop_at(uint32_t a);
+    uint32_t idle_lo_ = 0;               // start of the idle loop once found
     std::vector<AbsModule::Sym> syms_;
     std::vector<std::pair<uint32_t, uint64_t>> pc_hist_;
 private:

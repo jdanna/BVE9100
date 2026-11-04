@@ -17,7 +17,10 @@ online. See `docs/hardware.md` for the reconstructed memory map and `docs/firmwa
   DSC-63 text VRAM + keyboard/printer mailboxes, SPF board (field interrupt, GPI timers), SIO-4 RS-232
   mailboxes, WD33C93 SCSI stub (no HDD).
 * Emulated as stand-ins: IF-508 network board presence (required by this software edition), WD33C93 with no
-  disk attached. Double-width text is decoded; the halftone/logo graphics cells are drawn as `%`/`#`.
+  disk attached. The terminal view decodes the double-width title and shows other graphics cells as `#`/`%`.
+* The kernel's idle loop is skipped: while the CPU sits in `__sysstp`'s NOP loop the devices are ticked straight to
+  the next interrupt (`--no-idle-skip` runs it for real). This makes the boot about twice as fast in wall time
+  without changing emulated time.
 * Keyboard: wire codes reach the application and act on the edit page (player select keys verified);
   `keymap.txt` maps host keys to wire codes (full table: `docs/keyboard-codes.md`). `--tty` gives a live terminal
   view with keyboard input. The application's key-assignment table is loaded with the factory defaults by the
@@ -25,8 +28,9 @@ online. See `docs/hardware.md` for the reconstructed memory map and `docs/firmwa
 * RS-422 interface boards with virtual VTRs and a switcher (`src/devices/rs422.cpp`, `idc_peers.cpp`,
   protocol in `docs/rs422-idc.md`): timecode, transport, GO TO, jog/shuttle, PREVIEW and recorded edits work;
   the switcher only answers status polls.
-* Not yet: the DSC-63 character-generator ROM (the browser UI draws the glyphs from their roles), switcher
-  commands, hard disk.
+* Not yet: the DSC-63 character-generator ROM (the browser UI draws the text fonts and the boot title with system
+  fonts, and the SONY wallpaper and BVE-9100 wordmark from vector outlines made by `tools/gen_cg.py`, see
+  `docs/hardware.md`), switcher commands, hard disk.
 
 ## Build and command-line runs
 

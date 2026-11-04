@@ -102,12 +102,16 @@ async function start() {
 
 // ---- pacing: fast-forward through the boot, then real time ------------------------------------------------
 let base = null, lastReport = 0, speedAt = null;
+// Yield through a MessageChannel: unlike setTimeout(0) it is not clamped to 4 ms, which during the boot left the
+// worker idle a fifth of the time. Messages from the page still run between two turns.
+const tick = new MessageChannel();
+tick.port1.onmessage = () => loop();
 function loop() {
   if (!ready) return;
   const t0 = performance.now();
   let cyc = M._bve_cycles();
   if (cyc < TURBO_UNTIL) {
-    while (performance.now() - t0 < 15 && cyc < TURBO_UNTIL) { M._bve_step(200000); cyc = M._bve_cycles(); }
+    while (performance.now() - t0 < 100 && cyc < TURBO_UNTIL) { M._bve_step(200000); cyc = M._bve_cycles(); }
     if (t0 - lastReport > 500) { lastReport = t0; status(`Starting up… ${Math.floor(cyc / TURBO_UNTIL * 100)}%`); }
     if (cyc >= TURBO_UNTIL) { base = speedAt = { wall: performance.now(), cycles: cyc }; status(''); }
   } else {
@@ -120,7 +124,7 @@ function loop() {
       speedAt = { wall: now, cycles: cyc };
     }
   }
-  setTimeout(loop, 0);
+  if (cyc < TURBO_UNTIL) tick.port2.postMessage(0); else setTimeout(loop, 0);
 }
 
 // ---- persistence -------------------------------------------------------------------------------------------

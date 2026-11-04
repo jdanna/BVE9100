@@ -30,6 +30,7 @@ static void usage() {
         "  --ui-root DIR      directory with the front-end files (default ./ui)\n"
         "  --turbo-until N    run flat out until cycle N, then pace to real time (default with --http: 2700000000)\n"
         "  --realtime         pace the emulation to real time (default: as fast as possible)\n"
+        "  --no-idle-skip     execute the kernel's idle loop instead of skipping to the next interrupt\n"
         "  --keymap FILE      host key -> keyboard byte mapping (see keymap.txt)\n"
         "  --vram-dump FILE   write the DSC-63 VRAM (for analysis) at exit\n"
         "  --rs422 SLOT[:ID]  add an RS-422 interface board (option slot 0-6, board ID hex, default 200F)\n"
@@ -72,6 +73,7 @@ int main(int argc, char** argv) {
         }
         else if (a == "--mem-dump") cfg.mem_dumps.push_back(next());
         else if (a == "--realtime") cfg.realtime = true;
+        else if (a == "--no-idle-skip") cfg.idle_skip = false;
         else if (a == "--device") {         // --device PORT=KIND[:TYPE]  e.g. A=vtr, E=switcher:1001
             std::string v = next(); size_t e = v.find('='), c = v.find(':');
             if (e != 1 || !isalpha((unsigned char)v[0])) { usage(); return 2; }

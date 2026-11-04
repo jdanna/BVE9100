@@ -78,13 +78,27 @@ Items marked *(assumed)* are emulator choices that the firmware tolerates but th
 * Colour order (DIAG): BLACK, RED, GREEN, YELLOW, BLUE, MAGENTA, CYAN, WHITE, DARK GREEN, ASH BLUE,
   VERMILION, PALE PINK, MOSS GREEN, LIGHT BLUE, BRIGHT YELLOW, GRAY. The application loads colour 0 as white
   (frame lines) and uses colour 8 (very dark green) as the screen background.
-* CG banks (from MDISP code and photos): 0 ASCII, 0x80-0xDF frame lines, 0xE0-0xFF small capitals set into
-  frame lines; 1 alternative ASCII; 2 small font, 0x00-0x1F pop-up frame pieces; 3 timeline graphics
+* CG banks (from the drawing code of STRTUP, STRAPL and MDISP, VRAM dumps and photos): 0 ASCII, 0x80-0xDF frame
+  lines, 0xE0-0xFF small capitals set into frame lines; 1 alternative ASCII (the copyright line); 2 small bold font
+  (SRC, TT, TR, FM, TO, F-key numbers), 0x00-0x1F pop-up frame pieces, 0x80-0xFF a double-width bold Roman serif
+  (capitals, digits and punctuation only: left half = ASCII + 0x60, right half = ASCII + 0xA0); 3 timeline graphics
   (0x80-0x85 hollow bar, 0x8C-0x8E solid bar, 0x93/0x94/0x9B transition bar, 0xA2-0xB0 transition ramps,
-  0xDD/0xDE edit markers); 4 highlighted small text; 5 inverse ASCII (F-key strip, 0x9A divider,
-  0x9B left edge); 6 inverse double-width; 7 double-width (0x80-0xBF left half, +0x40 right half,
-  ASCII = code - 0x60), codes < 0x80 halftone; 8 rounded frame corners 0xD6-0xD9. Glyph shapes are
-  drawn by the UI from these roles; the CG ROM itself is not dumped.
+  0xB1-0xBC and 0xC0-0xCC dissolve/wipe pieces, 0xDD/0xDE edit markers; MDISP keeps 50 template strings for the
+  top-right transition diagram at file offset 0x32D6A); 4 highlighted small text; 5 inverse ASCII (F-key strip,
+  0x9A divider, 0x9B left edge); 6 inverse of bank 2 (the boot title "BVE-9100 MULTITASK OPERATING SYSTEM" is
+  bank 6 through STRTUP's `swawrite`, font 2 with the inverse bit); 7 the application switcher's artwork, written
+  to the overlay plane by STRAPL: 0x00-0x1F the SONY wordmark (one letter per 4x2 cells: S = 00-07, O = 08-0F,
+  N = 10-17, Y = 18-1F, row 0 = codes +0..3, row 1 = +4..7), tiled every 20 columns and 3 rows in a brick pattern
+  (STRAPL text 0xC600E466), and 0x80-0xE2 the BVE-9100 wordmark, 7 rows tall, from an 8 x 80 tile map at STRAPL
+  data 0x1DD8 (text 0xC600E5B4; 0x81 solid, 0x83 blank, 102 edge tiles; the letterforms are those of the Stencil
+  face: the B's bowls and the 0's halves are separated by vertical bridges); 0xE4-0xFB a 12 x 2 graphic (map at
+  data 0x1DA0) drawn at column 66, row 26 only in some configurations, shape unknown; 8 rounded frame corners
+  0xD6-0xD9. STRAPL's cells carry no 0x5000 bits (main plane word0 = 0x0020, attr 0x0406: cyan on blue).
+* The CG ROM itself is not dumped, and none of the disk files contains glyph bitmaps (every module was scanned):
+  the UI draws the text fonts (a condensed sans-serif) and the double-width serif of banks 2/6 >= 0x80 with
+  system fonts, and bank 7 from vector outlines made by `tools/gen_cg.py` (SONY from DejaVu Serif Bold, the
+  wordmark from Stardos Stencil with each letter fitted to its box in the tile map), each letter drawn whole over
+  the cells the software wrote. The map's solid cells suggest the real letters are heavier than the font's.
 
 ### Mailbox sub-processor ports (keyboard, printer, SIO-4 channels)
 

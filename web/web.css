@@ -23,7 +23,8 @@
 #landing .logo { height: 37px; width: auto; }
 #landing .wordmark { height: 26px; width: auto; }
 #landing .navlinks { display: flex; gap: 28px; }
-#landing .navlink { font-size: 14px; color: var(--muted); text-decoration: none; transition: color 0.2s; }
+#landing .navlink { display: flex; align-items: center; gap: 8px; font-size: 14px; white-space: nowrap; color: var(--muted); text-decoration: none; transition: color 0.2s; }
+#landing .navicon { width: 20px; height: 20px; }
 #landing .navlink:hover { color: var(--text); }
 #landing main {
   position: relative; display: flex; flex-direction: column; align-items: center; flex-shrink: 0;

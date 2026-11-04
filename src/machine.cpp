@@ -225,7 +225,11 @@ void Machine::dump_screen(FILE* f) { dsc->dump_screen(f, cfg_.color); dsc->scree
 // Instruction hook: fatal-exception stop, profiling, tracing, tracepoints, breakpoints and the key-assignment HLE
 void Machine::install_hooks() {
     uint32_t err_pc = rom_err_;
-    CpuGlue::instr_hook = [this, err_pc](uint32_t pc) {
+    // Without profiling, tracing, tracepoints or breakpoints only two addresses matter: leave the hook at once
+    // for every other instruction (it runs a few hundred million times during the boot).
+    const bool plain = !cfg_.profile && !cfg_.trace_from && cfg_.tracepoints.empty() && cfg_.breakpoints.empty();
+    CpuGlue::instr_hook = [this, err_pc, plain](uint32_t pc) {
+        if (plain && pc != err_pc && pc != 0x01010e98) return;
         if (pc == err_pc) {
             uint32_t sp = m68k_get_reg(nullptr, M68K_REG_SP);
             uint16_t sr = (uint16_t)bus.read16(sp), fmt = (uint16_t)bus.read16(sp + 6);
@@ -300,10 +304,29 @@ void Machine::install_hooks() {
         for (auto b : cfg_.breakpoints) if (pc == b) { fprintf(stderr, "*** BREAKPOINT %08x\n", pc); CpuGlue::dump_regs(stderr); halted_ = true; }
     };
 }
+// The SRMS kernel idles in __sysstp's loop of three NOPs and a branch back, waiting for an interrupt (the timer tick,
+// a floppy completion, a field interrupt). Executing those NOPs costs most of the host time of the boot (nearly
+// 60% of all cycles up to the edit page), so when the CPU sits in that loop the devices are ticked straight on to
+// the next interrupt instead. Emulated time and behaviour are unchanged: the CPU could only have executed NOPs.
+bool Machine::cpu_idle() {
+    if (!cfg_.idle_skip) return false;
+    uint32_t pc = m68k_get_reg(nullptr, M68K_REG_PC);
+    if (pc < idle_lo_ || pc > idle_lo_ + 6 || !idle_loop_at(idle_lo_)) {
+        idle_lo_ = 0;
+        for (uint32_t s = pc - 6; s <= pc; s += 2) if (idle_loop_at(s)) { idle_lo_ = s; break; }
+        if (!idle_lo_) return false;
+    }
+    int level = irq.highest_level(), mask = (m68k_get_reg(nullptr, M68K_REG_SR) >> 8) & 7;
+    return !(level == 7 || level > mask);          // runnable again once an interrupt can be taken
+}
+bool Machine::idle_loop_at(uint32_t a) {           // "nop; nop; nop; bra.s -8"
+    return bus.read16(a) == 0x4E71 && bus.read16(a + 2) == 0x4E71 && bus.read16(a + 4) == 0x4E71 && bus.read16(a + 6) == 0x60F8;
+}
 // Run at least `cycles` CPU cycles in the same 2000-cycle slices as run() (used by the WebAssembly build, whose
 // page paces the machine)
 void Machine::step(uint64_t cycles) {
     for (uint64_t done = 0; done < cycles && !halted_;) {
+        if (cpu_idle()) { g_cycles += 2000; bus.tick(2000); done += 2000; continue; }
         int n = m68k_execute(2000);
         g_cycles += (uint32_t)n; bus.tick((uint32_t)n); done += (uint32_t)n;
     }
@@ -414,6 +437,7 @@ void Machine::run() {
         int done = m68k_execute(slice);
         g_cycles += (uint32_t)done;
         bus.tick((uint32_t)done);
+        for (int i = 0; i < 25 && cpu_idle(); i++) { g_cycles += slice; bus.tick(slice); }   // idle: skip to the next interrupt
         if (cfg_.tty && g_cycles - last_poll > CPU_HZ / 100) {          // every 10 ms emulated
             last_poll = g_cycles;
             auto keys = tty.poll_keys();
