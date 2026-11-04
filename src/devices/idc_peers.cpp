@@ -30,12 +30,20 @@ std::string VirtualVtr::tc_string() const {
 
 // Cue: wind at up to 50x toward the target, then park in STILL (as a Sony deck does after CUE UP)
 void VirtualVtr::cue_to(double frame) {
-    cue_target_ = frame; cueing_ = true;
+    cue_target_ = frame; cueing_ = true; synced_ = false; edit_done_ = false;
     mode_ = frame >= pos_ ? FF : REW;
     speed_ = frame >= pos_ ? 50 : -50;
 }
 
 void VirtualVtr::advance(double seconds) {
+    if (cued_ && synced_) {                              // waiting for the start time on the edit timeline
+        timeline_ += seconds * fps_;
+        if (timeline_ >= pos_) {
+            LOGI("IDC %s (vtr): roll from %s\n", label.c_str(), tc_string().c_str());
+            cued_ = false; synced_ = false; mode_ = PLAY; speed_ = 1; rolled_ = true;
+        }
+        return;
+    }
     if (rolled_ && speed_ > 0) {                         // timed events of the edit sequence (recorder in/out)
         double next = pos_ + speed_ * seconds * fps_;
         for (auto& e : events_) {
@@ -45,10 +53,10 @@ void VirtualVtr::advance(double seconds) {
             else if (e.action == 0x11 && mode_ == REC) { mode_ = PLAY; LOGI("IDC %s (vtr): record off at %s\n", label.c_str(), tc_string().c_str()); }
         }
     }
-    if (rolled_ && rec_end_ > rec_in_) {                 // edit roll: stop at this deck's equivalent of recorder out + post-roll
-        double stop_at = (double)edit_in_ + (double)(rec_end_ - rec_in_);
+    if (rolled_ && rec_end_ > rec_in_) {                 // safety: stop 10 s after the end of the post-roll if 23 01 never comes
+        double stop_at = (double)edit_in_ + (double)(rec_end_ - rec_in_) + 300;
         if (pos_ + speed_ * seconds * fps_ >= stop_at) {
-            pos_ = stop_at; rolled_ = false; edit_done_ = true; mode_ = STOP; speed_ = 0;
+            pos_ = stop_at; rolled_ = false; edit_done_ = false; mode_ = STOP; speed_ = 0;
             LOGI("IDC %s (vtr): edit roll finished at %s\n", label.c_str(), tc_string().c_str());
             return;
         }
@@ -90,9 +98,9 @@ std::vector<uint8_t> VirtualVtr::device_request(const std::vector<uint8_t>& m) {
         // Reply [02, len, 71, 20, mask, blocks...] parsed by STRAPL (FUN_c6022844) into a per-port 20-byte record
         // that MAIN draws on the reel line:
         //   bit0 timecode: type (bit7 = LTC, no '.' after the TC), TC = binary frame count (4 bytes, big-endian), user bits 4 bytes
-        //   bit1 status:   [0xC0 = IDC talking to the deck + deck in REMOTE (0x80 alone -> LOCL/TOUT), transport code]
-        //                  transport code: 04 STOP, 0C FF, 0D REW, 10 FWD/var, 11 REV, 12 STILL
-        //   bit2 2 bytes (unknown), bit3 [servo group, play code 0x12, lock 0x20, extra], bit4 1 byte (unknown)
+        //   bit1 status:   [0xC0 = IDC talking to the deck + deck in REMOTE (0x80 alone -> LOCL/TOUT), +0x10 recording,
+        //                  transport code (below)]
+        //   bit2 search speed (tenths, bit 15 reverse, FFFF none), bit3 [servo group, play code 0x12, lock 0x20, extra], bit4 1 byte (unknown)
         uint8_t mask = m.size() > 4 ? m[4] : 0x1F;
         std::vector<uint8_t> r = {0x02, 0, 0x71, 0x20, mask};
         int64_t f = (int64_t)pos_; if (f < 0) f = 0;
@@ -103,9 +111,14 @@ std::vector<uint8_t> VirtualVtr::device_request(const std::vector<uint8_t>& m) {
             r.insert(r.end(), {0, 0, 0, 0});
         }
         if (mask & 0x02) {
+            // transport code (MAIN's reel-line text): 04 STOP (05 standby off), 08 PLAY, 0C FF, 0D REW,
+            // 10 forward var, 11 reverse var, 12 STILL, 14 JOG, 18 / 19 / 1A shuttle forward / reverse / still
             uint8_t t = 0x04;
             switch (mode_) {
-                case PLAY: case REC: case VAR: case JOG: case SHUTTLE: t = speed_ < 0 ? 0x11 : 0x10; break;
+                case PLAY: case REC: t = 0x08; break;
+                case VAR: t = speed_ < 0 ? 0x11 : 0x10; break;
+                case JOG: t = 0x14; break;
+                case SHUTTLE: t = speed_ > 0 ? 0x18 : speed_ < 0 ? 0x19 : 0x1A; break;
                 case STILL: t = 0x12; break;
                 case FF: t = 0x0C; break;
                 case REW: t = 0x0D; break;
@@ -113,16 +126,21 @@ std::vector<uint8_t> VirtualVtr::device_request(const std::vector<uint8_t>& m) {
             }
             r.push_back((uint8_t)((tape_ ? 0xC0 : 0x80) | (mode_ == REC ? 0x10 : 0))); r.push_back(t);   // 0x10 = recording
         }
-        if (mask & 0x04) { r.push_back(0); r.push_back(0); }
+        if (mask & 0x04) {
+            // search speed for the shuttle display: tenths of play speed, bit 15 = reverse; FFFF = none
+            uint16_t v = 0xFFFF;
+            if (mode_ == SHUTTLE) { int t10 = (int)std::lround(std::fabs(speed_) * 10); v = (uint16_t)(std::min(t10, 0x7FFF) | (speed_ < 0 ? 0x8000 : 0)); }
+            r.push_back((uint8_t)(v >> 8)); r.push_back((uint8_t)v);
+        }
         if (mask & 0x08) {
-            // IDC edit-sequencer phase in the low nibble of the first byte (AUTOX waits on it): 2 = active (cueing:
-            // 3rd byte 08, parked: 10, rolling: code 12 + 31 LOCK), 4 = edit sequence finished, 0 = idle; bit 3 = error.
-            if (mode_ == REC && rolled_) r.insert(r.end(), {0x02, 0x12, 0x00, 0x00});                      // recording: MAIN falls through to the REC display
-            else if ((mode_ == PLAY || mode_ == REC) && rolled_) r.insert(r.end(), {0x02, 0x12, 0x31, 0x00});   // rolling for an edit (LOCK)
-            else if (edit_done_) r.insert(r.end(), {0x04, 0x12, 0x10, 0x00});                              // edit sequence finished
-            else if (mode_ == PLAY || mode_ == REC) r.insert(r.end(), {0x02, 0x12, 0x20, 0x00});
-            else if (cueing_) r.insert(r.end(), {0x02, 0x00, 0x08, 0x00});     // cue in progress (MAIN: CUE> / CUE<)
-            else if (cued_) r.insert(r.end(), {0x02, 0x00, (uint8_t)cued_code_, 0x00});   // parked at the cue point
+            // IDC edit-sequencer phase in the low nibble of the first byte (AUTOX waits on it): 2 = cueing (3rd byte
+            // 08) or parked (10); 3 + code 14 = parked and locked to the start timeline sent with 40 00; 4 + code 14 =
+            // rolling in sync and, after 23 01, sequence ended; 0 = idle; bit 3 = error.
+            if (rolled_) r.insert(r.end(), {0x04, 0x14, 0x31, 0x00});                                        // rolling in sync on the edit timeline
+            else if (edit_done_) r.insert(r.end(), {0x04, 0x14, 0x10, 0x00});                              // sequence ended (after 23 01)
+            else if (cueing_) r.insert(r.end(), {0x02, 0x00, 0x08, 0x00});                                 // cue in progress (MAIN: CUE> / CUE<)
+            else if (cued_ && synced_) r.insert(r.end(), {0x03, 0x14, 0x10, 0x00});                        // parked and locked to the start timeline
+            else if (cued_) r.insert(r.end(), {0x02, 0x00, (uint8_t)cued_code_, 0x00});                   // parked at the cue point
             else r.insert(r.end(), {0x00, 0x00, 0x00, 0x00});
         }
         if (mask & 0x10) r.push_back(0);
@@ -143,22 +161,37 @@ std::vector<uint8_t> VirtualVtr::device_request(const std::vector<uint8_t>& m) {
         last_cmd_ = m;
         return {0x04, 0, 0x32, sub};
     }
-    if (cmd == 0x23 && sub == 0x00) {
-        // Edit-sequence control, sent to all decks of an edit at once: starts the synchronised roll of parked
-        // decks; sent again to rolling decks by ALL STOP, where it aborts the sequence.
-        if (cued_) {
-            LOGI("IDC %s (vtr): roll from %s\n", label.c_str(), tc_string().c_str());
-            cued_ = false; mode_ = PLAY; speed_ = 1; rolled_ = true;
-        } else if (rolled_) {
-            LOGI("IDC %s (vtr): edit sequence aborted at %s\n", label.c_str(), tc_string().c_str());
-            rolled_ = false; edit_done_ = false; mode_ = STOP; speed_ = 0;
+    if (cmd == 0x23) {
+        // Edit-sequence end: 23 01 at the end of the post-roll (deck stops, reports phase 4 / code 14 "sequence
+        // ended"), then 23 00 releases the deck (idle). 23 00 alone (ALL STOP, failed wait) aborts the sequence.
+        if (sub == 0x01 && (rolled_ || cued_ || synced_)) {
+            LOGI("IDC %s (vtr): edit sequence end at %s\n", label.c_str(), tc_string().c_str());
+            rolled_ = cued_ = cueing_ = synced_ = false; edit_done_ = true;
+            if (mode_ == REC) mode_ = PLAY;
+            mode_ = STILL; speed_ = 0;
+        } else if (sub == 0x00) {
+            if (rolled_ || cued_ || cueing_ || synced_) {
+                LOGI("IDC %s (vtr): edit sequence aborted at %s\n", label.c_str(), tc_string().c_str());
+                mode_ = STILL; speed_ = 0;
+            }
+            rolled_ = cued_ = cueing_ = synced_ = edit_done_ = false;
         }
         last_cmd_ = m;
         return {0x04, 0, 0x33, sub};
     }
-    if (cmd == 0x60) {                                   // sense without data (60 03 after a cue); answered as done
+    if (cmd == 0x60) {
+        // Edit-sequencer senses; data replies 70 xx with the payload sizes from the host's template table
+        // (CMNDB 0xD002E3A6): 70 00: 4, 70 01: 9, 70 02: 5, 70 03: 4, 70 04: 7, 70 10: 4, 70 20: 12 bytes.
+        // AUTOX sends 60 03 to every parked deck before the start and stores the 4 bytes (taken here to be the
+        // deck's current position as a frame count).
+        static const struct { uint8_t sub, n; } sizes[] = {{0x00,4},{0x01,9},{0x02,5},{0x03,4},{0x04,7},{0x10,4},{0x20,12}};
+        std::vector<uint8_t> r = {0x02, 0, 0x70, sub};
+        int n = 0; for (auto& z : sizes) if (z.sub == sub) n = z.n;
+        uint32_t fc = (uint32_t)(int64_t)pos_;
+        if (n >= 4) r.insert(r.end(), {(uint8_t)(fc >> 24), (uint8_t)(fc >> 16), (uint8_t)(fc >> 8), (uint8_t)fc});
+        while ((int)r.size() < 4 + n) r.push_back(0);
         last_cmd_ = m;
-        return {0x04, 0, 0x70, sub};
+        return r;
     }
     if (cmd == 0x41 && sub == 0x01 && m.size() >= 10) {   // timed event: at frame <4 bytes> do <action> (12 = record on, 11 = record off)
         uint32_t f = ((uint32_t)m[4] << 24) | ((uint32_t)m[5] << 16) | ((uint32_t)m[6] << 8) | m[7];
@@ -175,6 +208,12 @@ std::vector<uint8_t> VirtualVtr::device_request(const std::vector<uint8_t>& m) {
     }
     if (cmd == 0x40 && m.size() >= 8) {                  // edit set-up from PREVIEW / AUTO EDIT: points as frame counts
         uint32_t v = ((uint32_t)m[4] << 24) | ((uint32_t)m[5] << 16) | ((uint32_t)m[6] << 8) | m[7];
+        if (sub == 0x00 && cued_) {
+            // Start timeline: the value is where the deck's timeline stands now (parked position minus the start
+            // delay). The timeline advances one frame per frame; the deck rolls when it reaches the parked position.
+            synced_ = true; timeline_ = (double)v;
+            LOGI("IDC %s (vtr): start timeline %u, rolls in %.0f frames\n", label.c_str(), v, pos_ - timeline_);
+        }
         if (sub == 0x05) edit_in_ = v;                   // this deck's in point (sent twice)
         else if (sub == 0x01) rec_in_ = v;               // recorder in point (sent twice)
         else if (sub == 0x02) rec_out_ = v;              // recorder out point
@@ -198,8 +237,19 @@ std::vector<uint8_t> VirtualVtr::device_request(const std::vector<uint8_t>& m) {
             case 0x03: control("still", ""); break;
             case 0x06: control("ff", ""); break;
             case 0x07: control("rew", ""); break;
-            case 0x10: mode_ = JOG; speed_ = 0; cueing_ = false; break;
-            case 0x12: mode_ = SHUTTLE; speed_ = 0; cueing_ = false; break;
+            case 0x10: case 0x11: case 0x12: case 0x20: {
+                // search: 10 JOG (enter), 20 jog step of N frames, 11 variable speed (DMC / SLOW), 12 shuttle;
+                // data = [direction 0x80 = reverse, magnitude]. Speeds use the Sony 9-pin curve
+                // 10^(N/32 - 2) x play (N = 64 -> 1x), limited to 50x.
+                bool rev = m.size() > 4 && (m[4] & 0x80);
+                int n = m.size() > 5 ? m[5] : 0;
+                cueing_ = cued_ = false;
+                if (sub == 0x20) { mode_ = JOG; speed_ = 0; pos_ += rev ? -n : n; if (pos_ < 0) pos_ = 0; break; }
+                double v = n ? std::min(50.0, std::pow(10.0, n / 32.0 - 2.0)) : 0.0;
+                mode_ = sub == 0x10 ? JOG : sub == 0x11 ? VAR : SHUTTLE;
+                speed_ = rev ? -v : v;
+                break;
+            }
             default: LOGI("IDC %s (vtr): transport %02x not modelled\n", label.c_str(), sub); break;
         }
         last_cmd_ = m;
@@ -223,7 +273,7 @@ std::string VirtualVtr::status_json() const {
 bool VirtualVtr::control(const std::string& cmd, const std::string& arg) {
     cueing_ = false;
     if (cmd != "stop" && cmd != "still") cued_ = false;
-    rolled_ = false; edit_done_ = false;
+    rolled_ = false; edit_done_ = false; synced_ = false;
     for (auto& e : events_) e.done = true;
     if (cmd == "cue") { cue_to(atof(arg.c_str())); return true; }
     if (cmd == "play") { mode_ = PLAY; speed_ = 1; standby_ = true; }

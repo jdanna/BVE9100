@@ -38,7 +38,7 @@ struct MachineConfig {
     std::vector<std::string> symbol_files;   // raw .abs files whose symbol tables name addresses in reports
     bool profile = false;
     std::string vram_dump;               // write DSC-63 VRAM here at exit
-    struct KeyEvent { uint64_t cycle; std::vector<uint8_t> bytes; };
+    struct KeyEvent { uint64_t cycle; std::vector<uint8_t> bytes; int dial = 0; };
     std::vector<KeyEvent> key_events;    // scripted keyboard bytes delivered at a cycle
     bool tty = false;                    // interactive terminal front-end
     bool realtime = false;               // pace emulation to wall-clock time (20 MHz)

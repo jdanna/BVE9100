@@ -51,10 +51,11 @@ protected:
     void cue_to(double frame);
     bool cueing_ = false; double cue_target_ = 0;
     bool cued_ = false; int cued_code_ = 0x10;      // servo-block code while parked at a cue point (ready)
-    bool rolled_ = false, edit_done_ = false, rec_armed_ = false;
+    bool rolled_ = false, edit_done_ = false, rec_armed_ = false, synced_ = false;
     struct Event { uint32_t frame; uint8_t action; bool done = false; };
     std::vector<Event> events_;
     uint32_t edit_in_ = 0, rec_in_ = 0, rec_out_ = 0, rec_end_ = 0, preroll_ = 150;
+    double timeline_ = 0;
 };
 
 // Virtual video switcher behind a SW'ER IDC (IDC type 0x1xxx). Keeps crosspoint / transition / memory state

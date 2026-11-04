@@ -86,7 +86,7 @@ Items marked *(assumed)* are emulator choices that the firmware tolerates but th
 
 `+00` command (w; 6 = init, 1/2 = poll), `+02` param1, `+04` param2 (baud/format), `+0A` vectors (hi TX, lo RX), `+0C` vectors (hi "nop", lo reset), `+20` status (bit0 = sub-CPU idle), `+40` TX count then bytes at `+42`, `+E0` RX count then bytes at `+E2` (16 max). The sub-CPU interrupts the 68030 with the programmed vector numbers. The reset vector means "sub-CPU restarted" and must not be raised on command completion.
 
-Keyboard protocol (BKE-9400A): host blocks are `82 <len> <cmd> <data...> <checksum>`; commands seen: 'W' (0x57)
+Keyboard protocol (BKE-9400A): host blocks are `82 <len> <cmd> <data...> <checksum>`; commands seen: 'L' (0x4C) key lamps (bit 7 set: source lamp 0x81 R, 0x82-0x87 P1-P6, 0x88 AUX1, 0x89 AUX2, 0x8A BLACK; bit 7 clear: A1-A4 audio lamp mask), 'D' (0x44) search-dial mode and lamps (0x88 SHTL, 0x86 JOG, 0x8A DMC, 0x8C off; an extra byte presets the dial counter), 'W' (0x57)
 mode set, 'R' (0x52) read a register ('Z' = keyboard type/version byte), 'K' (0x4B) key attribute table (pairs of
 <type, code>). Keyboard answers `83` ACK, `84` NAK, `82 <byte>` for a register read. Key events are single wire
 codes (one per physical key, no release code): a plain byte, or prefix 0x80 / 0x81 plus a byte, which the kernel

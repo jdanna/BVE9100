@@ -86,6 +86,11 @@ int main(int argc, char** argv) {
             cfg.rs422.push_back({atoi(v.substr(0, c).c_str()), (uint16_t)(c == std::string::npos ? 0x200F : strtoul(v.substr(c + 1).c_str(), nullptr, 16))});
         }
         else if (a == "--keymap") cfg.keymap = next();
+        else if (a == "--dial") {           // --dial CYCLE:COUNTS  turn the search dial (signed counts) at a cycle
+            std::string v = next(); size_t c = v.find(':');
+            MachineConfig::KeyEvent ev; ev.cycle = strtoull(v.substr(0, c).c_str(), nullptr, 0); ev.dial = atoi(v.substr(c + 1).c_str());
+            cfg.key_events.push_back(ev);
+        }
         else if (a == "--key") {            // --key CYCLE:HH[,HH...]  raw keyboard bytes delivered to the DSC-63 keyboard port
             std::string v = next(); size_t c = v.find(':');
             MachineConfig::KeyEvent ev; ev.cycle = strtoull(v.substr(0, c).c_str(), nullptr, 0);

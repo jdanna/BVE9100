@@ -1,85 +1,80 @@
 # BVE-9100 emulator
 
-An emulator for the **Sony BVE-9100** broadcast editing controller (1991-2003): MC68030 "CPU-88" main
-board, DSC-63 display/keyboard board, SPF sync/GPI board, floppy, timers, interrupt controllers, and the
-mailbox sub-processors the SRMS real-time OS talks to. It boots the original software from the installer
-disks in `ref/` (BZE-9101/9102 operating program, SRMS kernel V2.32/V03L20).
+Runs the original software of the **Sony BVE-9100** editing controller in your browser, with an on-screen
+Sony keyboard and virtual tape decks and switcher attached.
 
-No hardware, schematics or ROM dump were available: the machine model was reconstructed by decompiling
-the firmware with Ghidra (the kernel ships with a full symbol table) and from Sony documentation found
-online. See `docs/hardware.md` for the reconstructed memory map and `docs/firmware.md` for the file formats.
+![The emulator: editor screen above, BKE-9400A keyboard below](docs/screenshot.png)
 
-## Status
+## Setup (once)
 
-* Boots `RMS.SYS` -> SRMS kernel -> `STRTUP.SYS` ("Kernel ( SRMS V2.32 ) Started", module list) -> STRAPL
-  application switcher (large-font "BVE-9100 MULTITASK OPERATING SYSTEM" title and logo) -> the editing
-  application comes up with its **edit page** (recorder R, players P1-P4, AX1/AX2, BLK, edit number, CUT) after
-  about 2 minutes of emulated time (a few seconds of wall time).
-* Emulated: 68030 + PMMU (Musashi, patched for TT0/TT1), DRAM/SRAM, 2 x 8254, 2 x 8259A, 8251 console,
-  custom DMA controller, WD177x-style FDC with raw 1.44 MB images, RTC, EEPROM, LEDs/DIP switches,
-  DSC-63 text VRAM + keyboard/printer mailboxes, SPF board (field interrupt, GPI timers), SIO-4 RS-232
-  mailboxes, WD33C93 SCSI stub (no HDD).
-* Emulated as stand-ins: IF-508 network board presence (required by this software edition), WD33C93 with no
-  disk attached. Double-width text is decoded; the halftone/logo graphics cells are drawn as `%`/`#`.
-* Keyboard: wire codes reach the application and act on the edit page (player select keys verified);
-  `keymap.txt` maps host keys to wire codes (full table: `docs/keyboard-codes.md`). `--tty` gives a live terminal
-  view with keyboard input. The application's key-assignment table is loaded with the factory defaults by the
-  emulator (`--no-keyassign` to disable), as a fresh machine's INIT MENU would.
-* Not yet: the DSC-63 character-generator fonts, RS-422 IDC interface boards (VTRs/switchers/mixers), hard disk,
-  a real display window.
-
-## Build and run
+You need macOS (or Linux) with Homebrew, a C++ compiler and Python 3.
 
 ```sh
-brew install lhasa cmake          # lha is needed to unpack the Sony installer files
-./tools/unpack_ref.sh             # unzips ref/*.ZIP into work/, builds work/sys1.img + work/sys2.img, raw modules in work/raw
+brew install lhasa cmake
+./tools/unpack_ref.sh          # unpacks the Sony installer disks from ref/ into work/
 cmake -B build && cmake --build build -j
-./build/bve9100 --boot work/raw/rms.abs --disk-a work/sys1.img --disk-b work/sys2.img --cycles 2600000000
-# browser front-end: live screen with proper fonts and a clickable BKE-9400A keyboard
-./run_ui.sh                      # boots in turbo mode (~10 s), then runs in real time at http://127.0.0.1:8090/
-# terminal front-end (live screen, keys from the terminal, Ctrl-] quits):
-./build/bve9100 --boot work/raw/rms.abs --disk-a work/sys1.img --disk-b work/sys2.img --sram work/sram.bin --tty
 ```
 
-The browser page (`ui/index.html`, served by the emulator's built-in HTTP server) polls `/screen` ten times a
-second, draws the 80x29 display with text, line-drawing and double-width fonts, and shows the BKE-9400A keyboard
-transcribed from the photos in `ref/`: click a key (or type on your keyboard) to send its wire code; SHIFT/CTRL
-arm the next key (each key/modifier combination has its own wire code, taken from the factory key-assignment
-table - hover a key to see them); the raw-bytes field sends anything.
+## Start
 
-The emulated system writes to the floppy images, so keep the generated `work/sys*.img` as masters and copy them
-for each run if you want a clean boot.
-
-The run stops after the given number of 20 MHz cycles (75 s emulated here, a few seconds of wall time)
-and prints the DSC-63 text screen. Useful options: `-vv` device log, `--profile` PC histogram with
-kernel symbol names (`--syms work/raw/rmsbdy.abs`), `--tp HEX` tracepoints, `--trace-from HEX`,
-`--screen 500` to redraw the screen every 500 ms of emulated time, `--vram-dump FILE`.
-
-## Layout
-
-```
-src/            emulator (bus, machine, CPU glue, devices/, httpd for the browser UI, tty front-end)
-ui/             browser front-end (screen renderer + on-screen keyboard)
-vendor/musashi  68k core (MIT), m68kmmu.h/m68kcpu.h patched for 68030 transparent translation
-tools/          absfile.py (.abs parser/extractor), mkfat12.py (disk image builder), unpack_ref.sh
-analysis/       Ghidra headless scripts, decompiled C of kernel/boot/startup/diag (gzip), symbol tables, I/O maps
-docs/           hardware.md (memory map), firmware.md, research/ (brochure, user's guide OCR, protocol PDFs)
-ref/            original Sony installer archives (input)
-work/           generated, ignored by git
+```sh
+./run_ui.sh
 ```
 
-## Re-running the decompilation
+Your browser opens <http://127.0.0.1:8090/>. The machine boots in fast-forward for about ten seconds and
+then runs in real time on the edit page. Stop it with Ctrl-C in the terminal; the editor's memory (setup,
+device assignment, EDL) is kept in `work/run/sram.bin` for next time. Delete that file to start from a
+factory-fresh machine. Use `PORT=9000 ./run_ui.sh` to pick another port.
 
-With Ghidra installed at `$GHIDRA_HOME` (default `~/ghidra`): `analysis/ghidra/batch_ghidra.sh` writes
-`work/ghidra/out/<module>.{c,asm,funcs}`. The checked-in `analysis/decomp/*.c.gz` are those outputs.
+## First time: assign the decks
 
-## Virtual VTRs and switcher
+Four virtual VTRs are connected to ports A-D and a video switcher to port E. Tell the editor about them once:
 
-The emulator fits RS-422 interface boards with virtual devices: VTRs on ports A-D and a video switcher on
-port E (`--device P=KIND[:TYPE]` to change, `--no-devices` to remove). Assign them once in the editor:
-INIT, F3 (ASSIGN), F7, F4 (DFLT ALL), YES; this puts R on A and P1-P3 on B-D and is kept in SRAM. The reel
-lines then show timecode and transport state; PLAY, STOP, STILL, FF, REW, JOG/SHTL and GO TO (select deck,
-type timecode, SET IN, GO TO) work. Preview cues the decks to their pre-roll points and rolls them together, but does not end yet (stop the decks by hand). `GET /devices`
-shows device state and `POST /devices/<port>` (body `play`, `stop`, `cue <frame>`, ...) drives a device from
-outside; this is where video players or OBS will connect. Protocol notes: `docs/rs422-idc.md`.
+1. Press **INIT**, then **F3** (ASSIGN).
+2. Press **F7** to show the second menu page, then **F4** (DFLT ALL) and **YES**.
+3. Press **RET** until you are back on the edit page.
 
+The reel lines now show R on port A and P1-P3 on ports B-D, each with timecode and transport state. Every
+virtual tape starts at 01:00:00:00.
+
+## Using the keyboard
+
+* Click the keys on the on-screen keyboard. **SHIFT** and **CTRL** arm the next key: the small top legend
+  on a key is its SHIFT function, the bottom legend its CTRL function. Hover a key to see what it sends.
+* Your computer keyboard works too: letters, digits and Space act like the same position on the Sony keyboard
+  (for example A = P1, V = PLAY, Z = REW, X = FF, C = STILL, Space = ALL STOP). F1-F8 are F1-F8, F9-F12 are
+  PF1-PF4, Esc is INIT, Enter is ENTER, Home is RET, Page Up / Page Down are YES / NO, Backspace and Tab are
+  BS and FS. Shift+digit and Ctrl+key give the top and bottom legends (Ctrl+3 = STOR ED).
+* The lamps on the keyboard follow the editor: the selected source (R, P1-P6, AUX, BLACK), the audio
+  channels A1-A4 and the dial mode.
+* The search dial: press **JOG**, **SHTL** or **DMC**, then drag the dial around (or scroll over it). In
+  shuttle, the further you turn from where you started, the faster the deck winds; turn back to stop.
+
+## Editing
+
+* **Transport:** select a deck (R or P1-P6), then PLAY, STOP, STILL, FF, REW, SLOW, or the dial.
+* **Go to a timecode:** select the deck, type the timecode on the number keys, press **SET IN**, then **GO TO**.
+* **Mark an edit:** select a deck and press **SET IN** / **SET OUT** (or type a timecode first), choose CUT,
+  DISS or WIPE, then **CTRL+3** (STOR ED) to store it in the EDL.
+* **Preview** an edit with **PREVIEW**; record a single edit with **CTRL+REC**; run the whole EDL with
+  **AUTO REC**. **ALL STOP** aborts.
+* To recall an edit from the EDL, type its number and press **BS**.
+
+The switcher answers the editor but does not switch any video yet.
+
+## Driving the decks from outside
+
+The emulator serves a small HTTP interface on the same port, so scripts or other programs can watch and
+control the virtual devices:
+
+```sh
+curl http://127.0.0.1:8090/devices                               # state of every deck and the switcher
+curl -X POST -d play  http://127.0.0.1:8090/devices/B            # put P1 (port B) in play
+curl -X POST -d "cue 108000" http://127.0.0.1:8090/devices/B     # cue to frame 108000 (01:00:00:00)
+curl -X POST -d +20   http://127.0.0.1:8090/dial                 # turn the search dial
+```
+
+## More
+
+* `docs/development.md`: how the emulator works, command-line options and the project layout.
+* `docs/hardware.md`, `docs/rs422-idc.md`, `docs/keyboard-codes.md`: reverse-engineered hardware and protocols.

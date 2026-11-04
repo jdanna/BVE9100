@@ -24,6 +24,13 @@ public:
     void tick(uint32_t cycles) override;
     void reset() override;
     MailboxPort keyboard, printer;
+    // Search dial of the BKE-9400A keyboard: the keyboard sub-CPU keeps a 16-bit up/down counter in the
+    // keyboard mailbox RAM; the kernel's dialstat() reads the word at 0x0D01CA02 + (word at 0x0D01CBE0).
+    // The value read is (mode word << 16) | counter; the mode word has bit 13 + mode set (0 SHTL, 1 JOG, 2 DMC,
+    // set by the host with keyboard command 'D'), which MANCNT compares with its own dial mode.
+    void dial_add(int counts);
+    int16_t dial_count() const { return dial_; }
+    int dial_mode() const { return dial_mode_; }
     // Render the visible 80x29 text screen as plain text lines (for the console front-end)
     std::vector<std::string> render_text() const;
     void dump_screen(FILE* out, bool color) const;
@@ -37,4 +44,7 @@ public:
 private:
     std::vector<uint8_t> vram_, plane2_;
     uint8_t regs_[0x800] = {0};
+    int16_t dial_ = 0;
+    int dial_mode_ = 3;             // 0 SHTL, 1 JOG, 2 DMC, 3 off
+    int lamp_src_ = 0, lamp_audio_ = 0;
 };

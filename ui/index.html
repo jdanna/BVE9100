@@ -33,8 +33,13 @@
   .key.gap { visibility:hidden; }
   .key.unv::after { content:"?"; position:absolute; top:1px; right:3px; font-size:8px; color:#a33; }
   .key.held { outline:2px solid #ffeb3b; }
-  .dial { width:170px; height:170px; border-radius:50%; background: radial-gradient(circle at 40% 35%, #555, #0d0d0d 70%); margin:6px auto; box-shadow: 0 6px 12px #0009; position:relative; }
-  .dial::after { content:""; position:absolute; left:50%; top:12px; width:8px; height:8px; margin-left:-4px; border-radius:50%; background:#999; }
+  .key .led { position:absolute; top:3px; right:4px; width:7px; height:7px; border-radius:50%; background:#3a1a12; box-shadow:0 0 1px #000 inset; }
+  .key.lit .led { background:#ff4a24; box-shadow:0 0 6px 1px #ff6a3c; }
+  .dial { width:170px; height:170px; border-radius:50%; background: radial-gradient(circle at 40% 35%, #555, #0d0d0d 70%); margin:6px auto; box-shadow: 0 6px 12px #0009; position:relative; cursor:grab; touch-action:none; user-select:none; }
+  .dial.drag { cursor:grabbing; }
+  .dial .mark { position:absolute; left:50%; top:12px; width:10px; height:10px; margin-left:-5px; border-radius:50%; background:#aaa; box-shadow:0 0 3px #000 inset; }
+  .dial .cap { position:absolute; left:50%; top:50%; width:46px; height:46px; margin:-23px 0 0 -23px; border-radius:50%; background: radial-gradient(circle at 40% 35%, #444, #151515 75%); }
+  .dialinfo { text-align:center; color:#888; font-size:11px; margin-top:-2px; }
   .ledbar { width:150px; height:34px; background:#111; border-radius:3px; margin:4px auto; color:#ccc; font-size:9px; text-align:center; padding-top:3px; }
   .ledbar i { display:inline-block; width:4px; height:4px; margin:1px; background:#2c2; }
 </style>
@@ -51,7 +56,8 @@
     <div class="block" id="far">
       <div class="ledbar">SEARCH<br><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><br><span style="font-size:7px">◀◀ REVERSE &nbsp;&nbsp; FORWARD ▶▶</span></div>
       <div class="row" id="dialkeys"></div>
-      <div class="dial" title="search dial (not emulated yet)"></div>
+      <div class="dial" id="dial" title="search dial: drag around (or use the mouse wheel); SHTL / JOG / DMC select the mode"><div class="mark"></div><div class="cap"></div></div>
+      <div class="dialinfo" id="dialinfo"></div>
     </div>
   </div>
 </div>
@@ -143,11 +149,25 @@ const RIGHT = [
 ];
 const DIAL = [K("SHTL","SHTL"), K("JOG","JOG",{t:"SYNC",shift:"SYNC JOG",s:"MEM JOG",ctrl:"MEM JOG"}), K("DMC","DMC")];
 
+// Key lamps, driven by the editor's keyboard commands ('L' source / audio lamps, 'D' dial mode):
+// src = lit source lamp number (1 R, 2..7 P1..P6, 8 AUX1, 9 AUX2, 10 BLACK), audio = A1..A4 bit mask,
+// dial = 0 SHTL / 1 JOG / 2 DMC.
+const LAMPS={'MONI-R':{src:1},'MONI-P1':{src:2},'MONI-P2':{src:3},'MONI-P3':{src:4},'MONI-P4':{src:5},'MONI-P5':{src:6},'MONI-P6':{src:7},
+  'MONI-AUX1':{src:8},'MONI-AUX2':{src:9},'MONI-BLACK':{src:10},'MONI-A1':{audio:0},'MONI-A2':{audio:1},'MONI-A3':{audio:2},'MONI-A4':{audio:3},
+  'SHTL':{dial:0},'JOG':{dial:1},'DMC':{dial:2}};
+function updateLamps(l){
+  if(!l) return;
+  document.querySelectorAll('.key[data-lamp]').forEach(e=>{ const m=JSON.parse(e.dataset.lamp); let on=false;
+    if('src' in m) on=l.src===m.src; else if('audio' in m) on=!!(l.audio&(1<<m.audio)); else if('dial' in m) on=l.dial===m.dial;
+    e.classList.toggle('lit',on); });
+  const info=document.getElementById('dialinfo'); if(info) info.textContent=['SHTL','JOG','DMC',''][l.dial]??'';
+}
 let shift=false, ctrl=false;
 function mk(k){
   const d=document.createElement('div');
   d.className='key '+(k.c||'')+' '+(k.w||'')+' '+(k.cls||'');
-  d.innerHTML=(k.t?`<div class="t">${k.t}</div>`:'')+`<div class="m">${k.m}</div>`+(k.s?`<div class="s">${k.s}</div>`:'');
+  d.innerHTML=(k.t?`<div class="t">${k.t}</div>`:'')+`<div class="m">${k.m}</div>`+(k.s?`<div class="s">${k.s}</div>`:'')+(LAMPS[k.fn]?'<div class="led"></div>':'');
+  if(LAMPS[k.fn]) d.dataset.lamp=JSON.stringify(LAMPS[k.fn]);
   const wire=(fn)=>fn?WIRE[fn]:null;
   const tip=[]; if(k.fn) tip.push(`${k.fn} = ${wire(k.fn)}`); if(k.shift) tip.push(`SHIFT: ${k.shift} = ${wire(k.shift)}`); if(k.ctrl) tip.push(`CTRL: ${k.ctrl} = ${wire(k.ctrl)}`);
   d.title=k.mod?`hold ${k.mod.toUpperCase()} for the next key`:tip.join('\n');
@@ -166,6 +186,26 @@ function mk(k){
 function refreshMods(){ document.querySelectorAll('.key').forEach(e=>{ if(e.dataset.mod==='shift') e.classList.toggle('held',shift); if(e.dataset.mod==='ctrl') e.classList.toggle('held',ctrl);}); }
 function fill(id, rows){ const b=document.getElementById(id); rows.forEach(r=>{ const row=document.createElement('div'); row.className='row'; r.forEach(k=>row.appendChild(mk(k))); b.appendChild(row); }); }
 fill('left',LEFT); fill('main',MAIN); fill('right',RIGHT); DIAL.forEach(k=>document.getElementById('dialkeys').appendChild(mk(k)));
+// ---------------------------------------------------------------------------------------------
+// Search dial: the keyboard keeps an up/down counter that the editor (MANCNT) polls every frame.
+// Dragging the knob around its centre turns it (DIAL_COUNTS per revolution); the counts are sent to
+// the emulator in small batches. In SHTL mode the editor uses the accumulated position (spring-free
+// ring: drag back to the centre mark to stop), in JOG / DMC mode the movement.
+// ---------------------------------------------------------------------------------------------
+const DIAL_COUNTS=120;
+(function(){
+  const el=document.getElementById('dial'), info=document.getElementById('dialinfo');
+  let angle=0, last=null, pend=0, frac=0, busy=false;
+  const ang=(e)=>{ const r=el.getBoundingClientRect(); return Math.atan2(e.clientY-(r.top+r.height/2), e.clientX-(r.left+r.width/2)); };
+  function turn(deg){ angle+=deg; el.style.transform=`rotate(${angle}deg)`; frac+=deg*DIAL_COUNTS/360; const n=Math.trunc(frac); if(n){ frac-=n; pend+=n; flush(); } }
+  async function flush(){ if(busy||!pend) return; busy=true; const n=pend; pend=0;
+    try{ await fetch('/dial',{method:'POST',body:(n>0?'+':'')+n}); }catch(e){} busy=false; if(pend) flush(); }
+  el.addEventListener('pointerdown',e=>{ last=ang(e); el.setPointerCapture(e.pointerId); el.classList.add('drag'); });
+  el.addEventListener('pointermove',e=>{ if(last===null) return; const a=ang(e); let d=(a-last)*180/Math.PI; if(d>180) d-=360; if(d<-180) d+=360; last=a; turn(d); });
+  const up=e=>{ last=null; el.classList.remove('drag'); };
+  el.addEventListener('pointerup',up); el.addEventListener('pointercancel',up);
+  el.addEventListener('wheel',e=>{ e.preventDefault(); turn(e.deltaY>0?6:-6); },{passive:false});
+})();
 
 function log(s){ /* key traffic is not shown in the UI */ }
 async function send(hex){ log('key '+hex); try{ await fetch('/key',{method:'POST',body:hex}); }catch(e){ log('send failed: '+e); } }
@@ -292,14 +332,45 @@ function glyph(ch,font,x,y,fg,bg){
   if(ch>=0x80){ const f=FRAME[ch]; if(f) seg(x,y,f); else if(ch===0xc0){ seg(x,y,'v'); text('*',x,y,15); } else ctx.fillRect(x+4,y+8,4,4); }
   return 1;
 }
+// Transition diagram of the timeline (bank 3): two rows, outgoing source above (8C, A9, AA..B0, A9, 94..)
+// and incoming source below (A9, A2..A8, A9, 94.., 9B). The CG draws them as one outlined bar spanning both
+// rows with a single diagonal across the mix (cf. the BVE-2000 screen); drawn here as one shape.
+function transitionBlocks(rows){
+  const isB3=(r,c)=>rows[r][c][1]===3, code=(r,c)=>rows[r][c][0];
+  const blocks=[];
+  for(let r=0;r<28;r++){
+    let up=-1, lo=-1;
+    for(let c=0;c<80;c++){ if(isB3(r,c) && code(r,c)>=0xaa && code(r,c)<=0xb0){ up=c; break; } }
+    for(let c=0;c<80;c++){ if(isB3(r+1,c) && code(r+1,c)>=0xa2 && code(r+1,c)<=0xa8){ lo=c; break; } }
+    if(up<0 || lo<0) continue;
+    let c0=lo; while(c0>0 && isB3(r,c0-1) && code(r,c0-1)!==0x20) c0--;
+    let c1=c0; for(let c=c0;c<80;c++){ if((isB3(r,c)&&code(r,c)!==0x20) || (isB3(r+1,c)&&code(r+1,c)!==0x20)) c1=c; else if(c>lo+8) break; }
+    let t1=lo; while(t1<80 && isB3(r+1,t1) && code(r+1,t1)>=0xa2 && code(r+1,t1)<=0xa8) t1++;   // first cell after the ramp
+    blocks.push({r, c0, c1, t0:lo, t1});
+  }
+  return blocks;
+}
+function drawTransition(b, fg){
+  const x0=b.c0*CW+2, x1=(b.c1+1)*CW-2, xt0=b.t0*CW, xt1=(b.t1+1)*CW;
+  const top=b.r*CH+4, bot=(b.r+2)*CH-4;
+  ctx.strokeStyle=fg; ctx.fillStyle=fg; ctx.lineWidth=1.5;
+  ctx.strokeRect(x0, top, x1-x0, bot-top);                       // outline of the bar
+  ctx.fillRect(x0, top-1, xt0-x0, 4);                             // outgoing source: thick top edge up to the mix
+  ctx.fillRect(xt1, bot-3, x1-xt1, 4);                            // incoming source: thick bottom edge after the mix
+  ctx.beginPath(); ctx.moveTo(xt0, bot); ctx.lineTo(xt1, top); ctx.stroke();   // the mix
+  ctx.lineWidth=2;
+}
 function render(scr){
   const pal=scr.pal ? scr.pal.map(crt) : DEFPAL;
   const ovpal=(scr.ovpal||[]).map(crt);
   ctx.fillStyle='#000'; ctx.fillRect(0,0,cv.width,cv.height);
   ctx.textBaseline='middle'; ctx.lineWidth=2;
+  const blocks=transitionBlocks(scr.rows), skip=new Set();
+  for(const b of blocks) for(let rr=b.r; rr<=b.r+1; rr++) for(let c=b.c0;c<=b.c1;c++) if(scr.rows[rr][c][1]===3) skip.add(rr*80+c);
   // main plane: attr bits 0-3 foreground, 8-11 background (main palette), 14 blink, 15 reverse
   for(let r=0;r<29;r++){ const row=scr.rows[r]; let c=0;
     while(c<80){ const [ch,font,attr]=row[c]; const x=c*CW, y=r*CH;
+      if(skip.has(r*80+c)){ ctx.fillStyle=scr.pal ? pal[(attr>>8)&15] : '#000'; ctx.fillRect(x,y,CW,CH); c++; continue; }
       let fg=pal[attr&15]||'#fff', bg=scr.pal ? pal[(attr>>8)&15] : '#000';
       if(attr&0x8000){ const t=fg; fg=bg; bg=t; }
       if((attr&0x4000) && blinkPhase) fg=bg;
@@ -308,6 +379,7 @@ function render(scr){
       c+=glyph(ch,font,x,y,fg,bg);
     }
   }
+  for(const b of blocks){ const a=scr.rows[b.r][b.t0][2]; drawTransition(b, pal[a&15]||'#fff'); }
   // overlay plane (pop-up windows, swatches, selection bars): [row, col, char, bank, colours];
   // colours bits 0-3 foreground, 4-7 background (overlay palette, 0 = transparent)
   for(const [r,c,ch,font,a] of (scr.ov||[])){
@@ -318,7 +390,7 @@ function render(scr){
   }
 }
 async function tick(){
-  try{ render(await fetch('/screen').then(r=>r.json())); }catch(e){}
+  try{ const scr=await fetch('/screen').then(r=>r.json()); render(scr); updateLamps(scr.lamps); }catch(e){}
 }
 setInterval(tick,100); setInterval(()=>{blinkPhase^=1;},500); tick();
 </script>

@@ -11,20 +11,42 @@ Dsc63::Dsc63(IrqController* irq) : keyboard("DSC63.KBD", irq, 3), printer("DSC63
     keyboard.on_tx = [this](const std::vector<uint8_t>& blk) {
         if (blk.size() < 3 || blk[0] != 0x82) return;
         uint8_t cmd = blk[2];
-        if (cmd == 0x52) { uint8_t reg = blk.size() > 3 ? blk[3] : 0; uint8_t v = keyboard_read_reg(reg); keyboard.deliver({0x82, v}); LOGD("KBD: read reg %02x -> %02x\n", reg, v); }
-        else keyboard.deliver({0x83});
+        if (cmd == 0x52) { uint8_t reg = blk.size() > 3 ? blk[3] : 0; uint8_t v = keyboard_read_reg(reg); keyboard.deliver({0x82, v}); LOGD("KBD: read reg %02x -> %02x\n", reg, v); return; }
+        if (cmd == 0x4C && blk.size() > 3) {
+            // 'L' key lamps: bit 7 set = video source lamp (0x81 R, 0x82..0x87 P1..P6, 0x88 AUX1, 0x89 AUX2,
+            // 0x8A BLACK, 0x80 none); bit 7 clear = audio lamps A1..A4 as a bit mask (bits 0..3)
+            uint8_t v = blk[3];
+            if (v & 0x80) lamp_src_ = v & 0x7F; else lamp_audio_ = v & 0x0F;
+        } else if (cmd == 0x44 && blk.size() > 3) {
+            // 'D' search dial mode + its lamps: 0x88 SHTL, 0x86 JOG, 0x8A DMC, 0x8C off; an optional data byte
+            // presets the dial counter (SHTL / DMC start from the centre)
+            uint8_t m = blk[3];
+            dial_mode_ = m == 0x88 ? 0 : m == 0x86 ? 1 : m == 0x8A ? 2 : 3;
+            if (blk.size() > 5) dial_ = (int16_t)(int8_t)blk[4];
+            LOGD("KBD: dial mode %02x -> %d, counter %d\n", m, dial_mode_, dial_);
+        }
+        keyboard.deliver({0x83});
     };
 }
 // Keyboard "register" values returned to 'R' requests. 'Z' (0x5A) is read right after the key tables are
 // loaded; the application compares the high byte of a keyboard-type word against 0x43 ('C').
 uint8_t Dsc63::keyboard_read_reg(uint8_t reg) { if (reg == 0x5A) return kbd_type; return 0; }
-void Dsc63::reset() { keyboard.reset(); printer.reset(); }
+void Dsc63::reset() { keyboard.reset(); printer.reset(); dial_ = 0; dial_mode_ = 3; lamp_src_ = 0; lamp_audio_ = 0; }
+// The dial counter lives at mailbox offset 0x102 (0x0D01CB02); the offset word at 0x0D01CBE0 points at it.
+static constexpr uint32_t DIAL_PTR = 0x1CBE0, DIAL_OFS = 0x100, DIAL_CNT = 0x1CA02 + DIAL_OFS;
+void Dsc63::dial_add(int counts) { dial_ = (int16_t)(dial_ + counts); }
 void Dsc63::tick(uint32_t c) { keyboard.tick(c); printer.tick(c); }
 uint8_t Dsc63::read8(uint32_t off) {
     if (off < 0x10000) return vram_[off];
     if (off < 0x1C000) return plane2_[off - 0x10000];
     if (off >= 0x1CA00 && off < 0x1CB00) return keyboard.read8(off - 0x1CA00);
     if (off >= 0x1CC00 && off < 0x1CD00) return printer.read8(off - 0x1CC00);
+    if (off == DIAL_PTR) return (uint8_t)(DIAL_OFS >> 8);
+    if (off == DIAL_PTR + 1) return (uint8_t)DIAL_OFS;
+    if (off == DIAL_CNT - 2) return dial_mode_ < 3 ? (uint8_t)(0x20 << dial_mode_) : 0;   // mode word (high byte)
+    if (off == DIAL_CNT - 1) return 0;
+    if (off == DIAL_CNT) return (uint8_t)((uint16_t)dial_ >> 8);
+    if (off == DIAL_CNT + 1) return (uint8_t)dial_;
     if (off >= 0x1C800) {
         if (off == 0x1C9C8 || off == 0x1C9C9) return 0;      // not busy
         return regs_[off - 0x1C800];
@@ -148,6 +170,7 @@ std::string Dsc63::screen_json() const {
         out += "]";
     }
     out += "],\"ov\":[" + ov + "]";
+    { char b[96]; snprintf(b, sizeof b, ",\"lamps\":{\"src\":%d,\"audio\":%d,\"dial\":%d}", lamp_src_, lamp_audio_, dial_mode_); out += b; }
     char tail[128]; snprintf(tail, sizeof tail, ",\"cursor\":%u,\"ctl\":%u", (unsigned)(((regs_[0x1A0] << 8) | regs_[0x1A1])), (unsigned)((regs_[0x1C0] << 8) | regs_[0x1C1]));
     out += tail;
     auto c8 = [](uint8_t v) { return (unsigned)((v & 0x3F) * 255 / 63); };

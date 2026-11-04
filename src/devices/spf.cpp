@@ -28,5 +28,7 @@ void Spf::write8(uint32_t off, uint8_t v) {
 void Spf::tick(uint32_t cycles) {
     pit1_.tick(cycles); pit2_.tick(cycles);
     acc_ += cycles;
-    while (acc_ >= field_cycles_) { acc_ -= field_cycles_; field_++; if ((field_ & 1) == 0) cf_ = (cf_ + 1) & 3; if (on_field) on_field(); }
+    // The interrupt (ICU1.3, vector 0x5B "fieldint") comes once per frame, at the start of field 1: the kernel's
+    // field tick posts one event per interrupt and STRAPL advances its frame clocks by one frame per event.
+    while (acc_ >= field_cycles_) { acc_ -= field_cycles_; field_++; if ((field_ & 1) == 0) { cf_ = (cf_ + 1) & 3; if (on_field) on_field(); } }
 }

@@ -249,9 +249,9 @@ void Machine::run() {
             uint32_t sp = m68k_get_reg(nullptr, M68K_REG_SP);
             // in user mode the C arguments sit on the user stack at logical addresses (translate through the PMMU)
             auto rd32 = [&](uint32_t la) { uint32_t pa = la; if (la >= 0x80000000 && m68k_pmmu_enabled()) pa = pmmu_translate_addr(la & ~0x3FFu) + (la & 0x3FF); return bus.read32(pa); };
-            fprintf(stderr, "[%10llu] TP %s%s  D0=%08x D1=%08x D7=%08x A0=%08x SP=%08x args=%08x %08x %08x ret=%08x\n", (unsigned long long)g_cycles, symbolize(pc).c_str(), current_task().c_str(),
+            fprintf(stderr, "[%10llu] TP %s%s  D0=%08x D1=%08x D7=%08x A0=%08x SP=%08x args=%08x %08x %08x %08x %08x %08x ret=%08x\n", (unsigned long long)g_cycles, symbolize(pc).c_str(), current_task().c_str(),
                 m68k_get_reg(nullptr, M68K_REG_D0), m68k_get_reg(nullptr, M68K_REG_D1), m68k_get_reg(nullptr, M68K_REG_D7), m68k_get_reg(nullptr, M68K_REG_A0), sp,
-                rd32(sp + 4), rd32(sp + 8), rd32(sp + 12), rd32(sp));
+                rd32(sp + 4), rd32(sp + 8), rd32(sp + 12), rd32(sp + 16), rd32(sp + 20), rd32(sp + 24), rd32(sp));
             {   // block addressed by A0 (kernel syscall parameter block) and the pointer stored at A0+8 (message)
                 uint32_t a0 = m68k_get_reg(nullptr, M68K_REG_A0);
                 if (a0 >= 0x80000000 && m68k_pmmu_enabled()) a0 = pmmu_translate_addr(a0);
@@ -292,8 +292,8 @@ void Machine::run() {
                 fprintf(stderr, "\n");
             }
             for (int ai = 1; ai <= 3; ai++) {
-                uint32_t a2 = bus.read32(sp + 4 * ai);
-                if (a2 >= 0x80000000 && m68k_pmmu_enabled()) a2 = pmmu_translate_addr(a2);
+                uint32_t a2 = rd32(sp + 4 * ai);
+                if (a2 >= 0x80000000 && m68k_pmmu_enabled()) a2 = pmmu_translate_addr(a2 & ~0x3FFu) + (a2 & 0x3FF);
                 if (a2 >= 0x01000000 && a2 < 0x01000000 + cfg_.dram_size - 16) {
                     fprintf(stderr, "             *arg%d:", ai); for (int i = 0; i < 16; i++) fprintf(stderr, " %02x", bus.read8(a2 + i));
                     fprintf(stderr, "  '"); for (int i = 0; i < 16; i++) { uint8_t c = bus.read8(a2 + i); fputc((c >= 0x20 && c < 0x7f) ? c : '.', stderr); } fprintf(stderr, "'\n");
@@ -317,6 +317,12 @@ void Machine::run() {
         httpd_.handler = [this](const Httpd::Request& r) {
             Httpd::Response resp;
             if (r.path == "/screen") { resp.type = "application/json"; resp.body = dsc->screen_json(); }
+            else if (r.path == "/dial" && r.method == "POST") {   // body: signed dial counts, e.g. "+12" or "-3"
+                int n = atoi(r.body.c_str());
+                dsc->dial_add(n);
+                char b[48]; snprintf(b, sizeof b, "{\"dial\":%d}", dsc->dial_count());
+                resp.type = "application/json"; resp.body = b;
+            }
             else if (r.path == "/devices") {                 // state of the virtual RS-422 devices
                 std::string j = "[";
                 for (auto& pp : peers) {
@@ -376,7 +382,10 @@ void Machine::run() {
             if (fdc->load_image(sw.drive, sw.image, false)) misc->set_disk_changed(sw.drive);
             LOGI("FDC: disk swapped in drive %c -> %s\n", 'A' + sw.drive, sw.image.c_str());
         }
-        for (auto& k : cfg_.key_events) if (!k.bytes.empty() && g_cycles >= k.cycle) { dsc->keyboard.deliver(k.bytes); LOGI("KEY: injected %zu bytes\n", k.bytes.size()); k.bytes.clear(); }
+        for (auto& k : cfg_.key_events) {
+            if (!k.bytes.empty() && g_cycles >= k.cycle) { dsc->keyboard.deliver(k.bytes); LOGI("KEY: injected %zu bytes\n", k.bytes.size()); k.bytes.clear(); }
+            if (k.dial && g_cycles >= k.cycle) { dsc->dial_add(k.dial); LOGI("DIAL: %+d -> %d\n", k.dial, dsc->dial_count()); k.dial = 0; }
+        }
         if (cfg_.screen_every_ms && dsc->screen_dirty && g_cycles - last_screen_ > (uint64_t)cfg_.screen_every_ms * (CPU_HZ / 1000)) {
             last_screen_ = g_cycles; fprintf(stdout, "\033[H\033[2J"); dump_screen(stdout);
         }
