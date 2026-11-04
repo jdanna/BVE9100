@@ -278,7 +278,9 @@ const SHIFT_FK={F1:'MONI-R',F2:'MONI-P1',F3:'MONI-P2',F4:'MONI-P3',F5:'MONI-P4',
 const PHYS_SHIFT={'1':'LOAD EDL','2':'SAVE EDL','3':'MOD EDL','4':'CRCT','5':'INSRT','6':'DEL','7':'MOVE','8':'NOTE','9':'LAST EDIT','0':'RECALL'};
 const PHYS_CTRL={'3':'STOR ED','4':'APPEND','7':'COPY','0':'RECAL SCROL','e':'REC','t':'PREROLL','y':'BAK AUX','u':'1ST - ED','i':'PREREAD','q':'P-LEARN','w':'S QUICK PVW','a':'P7','s':'P8','d':'P9','f':'P10','g':'P11','h':'P12','k':'SY-TIME','z':'FREEZE-OFF','x':'FREEZE-ON','c':'STANDBY OFF','v':'MEM PLAY','b':'EJECT','n':'TRACK SCROL','m':'MRK SPD',',':'LAST MARK','.':'MULTI-SCRPD','/':'RECAL SEGMT','p':'CTL+CUT',' ':'CTL+ALLSTOP',Enter:'CTL+ENTER',ArrowUp:'CTL+UP',ArrowDown:'CTL+DOWN',ArrowLeft:'CTL+LEFT',ArrowRight:'CTL+RIGHT'};
 document.addEventListener('keydown',e=>{
-  if(['INPUT','SELECT','TEXTAREA','BUTTON'].includes(e.target.tagName)) return;
+  if(['INPUT','SELECT','TEXTAREA'].includes(e.target.tagName)) return;
+  // A clicked button keeps the focus; the keyboard still belongs to the editor (and Space/Enter must not click it again)
+  if(e.target.tagName==='BUTTON') e.target.blur();
   let code=null;
   if(e.ctrlKey && PHYS_CTRL[e.key]) code=WIRE[PHYS_CTRL[e.key]];
   else if(e.ctrlKey && PHYS_CTRL[e.key.toLowerCase()]) code=WIRE[PHYS_CTRL[e.key.toLowerCase()]];
@@ -558,7 +560,7 @@ const PRESETS=[['Sony factory',SONY_PAL], ...TUESDAY.map(([n,c,a])=>[n,schemePal
   sel.onchange=()=>{ if(sel.value==='') return; cur=PRESETS[+sel.value][1].map(v=>v.slice()); show(); preview(); say(`Previewing "${PRESETS[+sel.value][0]}". Inject to keep it.`); sel.value=''; };
   document.getElementById('palinject').onclick=async()=>{
     try{ const r=await fetch('/palette',{method:'POST',body:cur.flat().join(' ')}); if(!r.ok) throw new Error(await r.text());
-      stored=(await r.json()).pal; previewPal=null; say('Injected into SRAM. Stop the emulator with Ctrl-C to save it to work/run/sram.bin.'); }
+      stored=(await r.json()).pal; previewPal=null; say(window.BVE_WEB ? 'Injected into SRAM. This browser keeps it.' : 'Injected into SRAM. Stop the emulator with Ctrl-C to save it to work/run/sram.bin.'); }
     catch(e){ say('Inject failed: '+e.message,true); }
   };
   document.getElementById('palreload').onclick=load;

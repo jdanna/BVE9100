@@ -126,10 +126,7 @@ Machine::Machine(const MachineConfig& cfg) : cfg_(cfg) {
     CpuGlue::install(&bus, &irq);
     build_rom();
 }
-Machine::~Machine() {
-    fdc->save_images();
-    if (!cfg_.sram_path.empty()) { FILE* f = fopen(cfg_.sram_path.c_str(), "wb"); if (f) { fwrite(sram->data().data(), 1, sram->size(), f); fclose(f); LOGI("SRAM: saved %s\n", cfg_.sram_path.c_str()); } }
-}
+Machine::~Machine() { save_state(); }
 
 // Minimal stand-in for the CPU-88 monitor ROM: reset vector + two exception stubs.
 void Machine::build_rom() {
@@ -225,9 +222,8 @@ std::string Machine::symbolize(uint32_t addr) const {
 }
 void Machine::dump_screen(FILE* f) { dsc->dump_screen(f, cfg_.color); dsc->screen_dirty = false; }
 
-void Machine::run() {
-    signal(SIGINT, on_sigint);
-    const uint32_t slice = 2000;           // 100 us of CPU time per slice
+// Instruction hook: fatal-exception stop, profiling, tracing, tracepoints, breakpoints and the key-assignment HLE
+void Machine::install_hooks() {
     uint32_t err_pc = rom_err_;
     CpuGlue::instr_hook = [this, err_pc](uint32_t pc) {
         if (pc == err_pc) {
@@ -303,6 +299,103 @@ void Machine::run() {
         }
         for (auto b : cfg_.breakpoints) if (pc == b) { fprintf(stderr, "*** BREAKPOINT %08x\n", pc); CpuGlue::dump_regs(stderr); halted_ = true; }
     };
+}
+// Run at least `cycles` CPU cycles in the same 2000-cycle slices as run() (used by the WebAssembly build, whose
+// page paces the machine)
+void Machine::step(uint64_t cycles) {
+    for (uint64_t done = 0; done < cycles && !halted_;) {
+        int n = m68k_execute(2000);
+        g_cycles += (uint32_t)n; bus.tick((uint32_t)n); done += (uint32_t)n;
+    }
+}
+// Write the floppy images (if changed), SRAM and EEPROM to their files
+void Machine::save_state() {
+    fdc->save_images();
+    if (!cfg_.sram_path.empty()) { FILE* f = fopen(cfg_.sram_path.c_str(), "wb"); if (f) { fwrite(sram->data().data(), 1, sram->size(), f); fclose(f); LOGI("SRAM: saved %s\n", cfg_.sram_path.c_str()); } }
+    eeprom->save();
+}
+// The front-end's API (see ui/index.html): served by Httpd in the native build, called directly by the WebAssembly
+// build's worker
+Httpd::Response Machine::handle(const Httpd::Request& r) {
+    Httpd::Response resp;
+    if (r.path == "/screen") { resp.type = "application/json"; resp.body = dsc->screen_json(); }
+    else if (r.path == "/dial" && r.method == "POST") {   // body: signed dial counts, e.g. "+12" or "-3"
+        int n = atoi(r.body.c_str());
+        dsc->dial_add(n);
+        char b[48]; snprintf(b, sizeof b, "{\"dial\":%d}", dsc->dial_count());
+        resp.type = "application/json"; resp.body = b;
+    }
+    else if (r.path == "/devices") {                 // state of the virtual RS-422 devices
+        std::string j = "[";
+        for (auto& pp : peers) {
+            std::string st = pp.peer->status_json();
+            if (j.size() > 1) j += ",";
+            j += "{\"port\":\"" + std::string(1, pp.port) + "\"," + st.substr(1);
+        }
+        resp.type = "application/json"; resp.body = j + "]";
+    }
+    else if (r.path.rfind("/devices/", 0) == 0 && r.method == "POST") {   // body: "<command> [arg]"
+        char port = r.path.size() > 9 ? (char)toupper(r.path[9]) : 0;
+        std::string cmd = r.body, arg;
+        while (!cmd.empty() && isspace((unsigned char)cmd.back())) cmd.pop_back();
+        size_t sp = cmd.find(' '); if (sp != std::string::npos) { arg = cmd.substr(sp + 1); cmd = cmd.substr(0, sp); }
+        bool ok = false;
+        for (auto& pp : peers) if (pp.port == port) ok = pp.peer->control(cmd, arg);
+        resp.status = ok ? 200 : 400; resp.body = ok ? "ok" : "unknown device or command";
+    }
+    else if (r.path == "/status") {
+        char b[256]; snprintf(b, sizeof b, "{\"cycles\":%llu,\"seconds\":%.2f,\"leds\":%u,\"realtime\":%s}", (unsigned long long)g_cycles, (double)g_cycles / CPU_HZ, misc->leds, cfg_.realtime ? "true" : "false");
+        resp.type = "application/json"; resp.body = b;
+    }
+    else if (r.path == "/key" && r.method == "POST") {       // body: hex bytes, e.g. "82 03 57"
+        std::vector<uint8_t> bytes; std::istringstream ss(r.body); std::string tok;
+        while (ss >> tok) bytes.push_back((uint8_t)strtoul(tok.c_str(), nullptr, 16));
+        if (!bytes.empty()) { dsc->keyboard.deliver(bytes); LOGD("HTTP: key bytes delivered (%zu)\n", bytes.size()); }
+        resp.body = "ok";
+    }
+    // Colour palette of the editor's VDU (INIT > LAYOUT > PALETTE): 16 entries x [r, g, b, 0], 6-bit values,
+    // in the !BUPDB setup database at SRAM 0x807020 (no checksum covers it). GET returns it; POST with 48
+    // numbers (r g b for colours 0-15) writes it there, replaces every copy of the old palette the running
+    // application holds in DRAM (it keeps several and would otherwise write one back), and loads the
+    // display's palette registers so the change shows at once.
+    else if (r.path == "/palette") {
+        auto& sd = sram->data();
+        const uint32_t PAL = 0x7020;
+        if (r.method == "POST") {
+            std::vector<int> v; std::istringstream ss(r.body); std::string tok;
+            while (ss >> tok) { for (char& ch : tok) if (ch == ',') ch = ' '; std::istringstream t(tok); int x; while (t >> x) v.push_back(x); }
+            if (v.size() != 48) { resp.status = 400; resp.body = "need 48 values (r g b x 16, 0-63)"; return resp; }
+            std::vector<uint8_t> old(sd.begin() + PAL, sd.begin() + PAL + 64), now(64, 0);
+            for (int i = 0; i < 16; i++) for (int k = 0; k < 3; k++) now[i * 4 + k] = (uint8_t)std::clamp(v[i * 3 + k], 0, 63);
+            int copies = 0;
+            auto& dd = dram->data();
+            for (size_t i = 0; i + 64 <= dd.size(); i++)
+                if (dd[i] == old[0] && std::equal(old.begin(), old.end(), dd.begin() + i)) { std::copy(now.begin(), now.end(), dd.begin() + i); copies++; i += 63; }
+            std::copy(now.begin(), now.end(), sd.begin() + PAL);
+            for (int i = 0; i < 16; i++) dsc->set_palette(i, now[i * 4], now[i * 4 + 1], now[i * 4 + 2]);
+            LOGI("HTTP: palette injected (SRAM + %d DRAM copies)\n", copies);
+        }
+        std::string j = "{\"pal\":[";
+        for (int i = 0; i < 16; i++) {
+            char b[32]; snprintf(b, sizeof b, "%s[%u,%u,%u]", i ? "," : "", sd[PAL + i * 4], sd[PAL + i * 4 + 1], sd[PAL + i * 4 + 2]);
+            j += b;
+        }
+        resp.type = "application/json"; resp.body = j + "]}";
+    }
+    // Snapshots of the machine's persistent state as it is now (what Ctrl-C would save): GET /sram, /eeprom,
+    // /disk/a, /disk/b. scripts/snapshot-defaults.mjs uses them for the web version's starting state.
+    else if (r.method == "GET" && (r.path == "/sram" || r.path == "/eeprom" || r.path == "/disk/a" || r.path == "/disk/b")) {
+        const std::vector<uint8_t>* d = r.path == "/sram" ? &sram->data() : r.path == "/eeprom" ? &eeprom->data()
+                                       : &fdc->image(r.path == "/disk/b" ? 1 : 0);
+        resp.type = "application/octet-stream"; resp.body.assign(d->begin(), d->end());
+    }
+    else { resp.status = 404; resp.body = "unknown endpoint"; }
+    return resp;
+}
+void Machine::run() {
+    signal(SIGINT, on_sigint);
+    const uint32_t slice = 2000;           // 100 us of CPU time per slice
+    install_hooks();
     auto wall_start = std::chrono::steady_clock::now();
     TtyFrontend tty;
     if (cfg_.tty) {
@@ -315,75 +408,7 @@ void Machine::run() {
     if (cfg_.http_port) {
         if (!httpd_.start(cfg_.http_port, cfg_.ui_root)) fprintf(stderr, "HTTP: cannot listen on port %d\n", cfg_.http_port);
         else fprintf(stderr, "HTTP: front-end at http://127.0.0.1:%d/  (ui files from %s/)\n", cfg_.http_port, cfg_.ui_root.c_str());
-        httpd_.handler = [this](const Httpd::Request& r) {
-            Httpd::Response resp;
-            if (r.path == "/screen") { resp.type = "application/json"; resp.body = dsc->screen_json(); }
-            else if (r.path == "/dial" && r.method == "POST") {   // body: signed dial counts, e.g. "+12" or "-3"
-                int n = atoi(r.body.c_str());
-                dsc->dial_add(n);
-                char b[48]; snprintf(b, sizeof b, "{\"dial\":%d}", dsc->dial_count());
-                resp.type = "application/json"; resp.body = b;
-            }
-            else if (r.path == "/devices") {                 // state of the virtual RS-422 devices
-                std::string j = "[";
-                for (auto& pp : peers) {
-                    std::string st = pp.peer->status_json();
-                    if (j.size() > 1) j += ",";
-                    j += "{\"port\":\"" + std::string(1, pp.port) + "\"," + st.substr(1);
-                }
-                resp.type = "application/json"; resp.body = j + "]";
-            }
-            else if (r.path.rfind("/devices/", 0) == 0 && r.method == "POST") {   // body: "<command> [arg]"
-                char port = r.path.size() > 9 ? (char)toupper(r.path[9]) : 0;
-                std::string cmd = r.body, arg;
-                while (!cmd.empty() && isspace((unsigned char)cmd.back())) cmd.pop_back();
-                size_t sp = cmd.find(' '); if (sp != std::string::npos) { arg = cmd.substr(sp + 1); cmd = cmd.substr(0, sp); }
-                bool ok = false;
-                for (auto& pp : peers) if (pp.port == port) ok = pp.peer->control(cmd, arg);
-                resp.status = ok ? 200 : 400; resp.body = ok ? "ok" : "unknown device or command";
-            }
-            else if (r.path == "/status") {
-                char b[256]; snprintf(b, sizeof b, "{\"cycles\":%llu,\"seconds\":%.2f,\"leds\":%u,\"realtime\":%s}", (unsigned long long)g_cycles, (double)g_cycles / CPU_HZ, misc->leds, cfg_.realtime ? "true" : "false");
-                resp.type = "application/json"; resp.body = b;
-            }
-            else if (r.path == "/key" && r.method == "POST") {       // body: hex bytes, e.g. "82 03 57"
-                std::vector<uint8_t> bytes; std::istringstream ss(r.body); std::string tok;
-                while (ss >> tok) bytes.push_back((uint8_t)strtoul(tok.c_str(), nullptr, 16));
-                if (!bytes.empty()) { dsc->keyboard.deliver(bytes); LOGD("HTTP: key bytes delivered (%zu)\n", bytes.size()); }
-                resp.body = "ok";
-            }
-            // Colour palette of the editor's VDU (INIT > LAYOUT > PALETTE): 16 entries x [r, g, b, 0], 6-bit values,
-            // in the !BUPDB setup database at SRAM 0x807020 (no checksum covers it). GET returns it; POST with 48
-            // numbers (r g b for colours 0-15) writes it there, replaces every copy of the old palette the running
-            // application holds in DRAM (it keeps several and would otherwise write one back), and loads the
-            // display's palette registers so the change shows at once.
-            else if (r.path == "/palette") {
-                auto& sd = sram->data();
-                const uint32_t PAL = 0x7020;
-                if (r.method == "POST") {
-                    std::vector<int> v; std::istringstream ss(r.body); std::string tok;
-                    while (ss >> tok) { for (char& ch : tok) if (ch == ',') ch = ' '; std::istringstream t(tok); int x; while (t >> x) v.push_back(x); }
-                    if (v.size() != 48) { resp.status = 400; resp.body = "need 48 values (r g b x 16, 0-63)"; return resp; }
-                    std::vector<uint8_t> old(sd.begin() + PAL, sd.begin() + PAL + 64), now(64, 0);
-                    for (int i = 0; i < 16; i++) for (int k = 0; k < 3; k++) now[i * 4 + k] = (uint8_t)std::clamp(v[i * 3 + k], 0, 63);
-                    int copies = 0;
-                    auto& dd = dram->data();
-                    for (size_t i = 0; i + 64 <= dd.size(); i++)
-                        if (dd[i] == old[0] && std::equal(old.begin(), old.end(), dd.begin() + i)) { std::copy(now.begin(), now.end(), dd.begin() + i); copies++; i += 63; }
-                    std::copy(now.begin(), now.end(), sd.begin() + PAL);
-                    for (int i = 0; i < 16; i++) dsc->set_palette(i, now[i * 4], now[i * 4 + 1], now[i * 4 + 2]);
-                    LOGI("HTTP: palette injected (SRAM + %d DRAM copies)\n", copies);
-                }
-                std::string j = "{\"pal\":[";
-                for (int i = 0; i < 16; i++) {
-                    char b[32]; snprintf(b, sizeof b, "%s[%u,%u,%u]", i ? "," : "", sd[PAL + i * 4], sd[PAL + i * 4 + 1], sd[PAL + i * 4 + 2]);
-                    j += b;
-                }
-                resp.type = "application/json"; resp.body = j + "]}";
-            }
-            else { resp.status = 404; resp.body = "unknown endpoint"; }
-            return resp;
-        };
+        httpd_.handler = [this](const Httpd::Request& r) { return handle(r); };
     }
     while (!g_stop && !halted_) {
         int done = m68k_execute(slice);

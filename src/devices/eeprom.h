@@ -10,6 +10,7 @@ public:
     uint8_t read8(uint32_t off) override { return mem_[off & 0x7FF]; }
     void write8(uint32_t off, uint8_t v) override { mem_[off & 0x7FF] = v; dirty_ = true; }
     void save();
+    const std::vector<uint8_t>& data() const { return mem_; }
 private:
     std::string path_; std::vector<uint8_t> mem_; bool dirty_ = false;
 };

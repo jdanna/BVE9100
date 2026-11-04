@@ -24,6 +24,7 @@ public:
     void set_density(bool hd) { hd_ = hd; }
     bool write_protected() const { return drives_[sel_].present && drives_[sel_].wp; }
     bool disk_present(int d) const { return drives_[d & 1].present; }
+    const std::vector<uint8_t>& image(int d) const { return drives_[d & 1].image; }
     std::function<void(bool)> on_irq;
     std::function<void(bool)> on_drq;
     int dma_channel = 3;

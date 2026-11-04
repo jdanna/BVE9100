@@ -64,6 +64,10 @@ public:
     ~Machine();
     bool boot(std::string* err);
     void run();
+    void install_hooks();                  // instruction hook (run() installs it)
+    void step(uint64_t cycles);            // run this many CPU cycles (WebAssembly build)
+    void save_state();                     // floppies, SRAM, EEPROM to their files
+    Httpd::Response handle(const Httpd::Request& r);   // front-end API: /screen, /key, /dial, /devices, /palette, ...
     void dump_screen(FILE* f);
     Bus bus; IrqController irq;
     std::unique_ptr<Ram> rom, sram, dram;

@@ -1,0 +1,13 @@
+{
+  "name": "bve9100-emulator",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Sony BVE-9100 emulator: native build with CMake, web build with Emscripten",
+  "scripts": {
+    "snapshot:web": "node scripts/snapshot-defaults.mjs",
+    "build:web": "node scripts/build-web.mjs",
+    "deploy:web": "npm run build:web && npx wrangler pages deploy dist-web --project-name bve9100-emulator --branch main",
+    "preview:web": "node scripts/headless/web-server.mjs",
+    "test:web": "node scripts/headless/web-boot.mjs"
+  }
+}

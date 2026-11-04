@@ -4,3 +4,7 @@ build/
 ref/extracted/
 work/
 __pycache__/
+build-web/
+dist-web/
+.wrangler/
+node_modules/

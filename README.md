@@ -1,7 +1,7 @@
 # BVE-9100 emulator
 
-Runs the original software of the **Sony BVE-9100** editing controller in your browser, with an on-screen
-Sony keyboard and virtual tape decks and switcher attached.
+Runs the original software of the **Sony BVE-9100** in your browser, with an on-screen
+Sony keyboard and virtual tape decks and switcher attached. Live at **[bve.retrograde.tools](https://bve.retrograde.tools)**.
 
 ![The emulator: editor screen above, BKE-9400A keyboard below](docs/screenshot.png)
 
@@ -86,6 +86,31 @@ curl -X POST -d +20   http://127.0.0.1:8090/dial                 # turn the sear
 curl http://127.0.0.1:8090/palette                               # VDU colour palette (16 x 6-bit r g b)
 curl -X POST -d "63 63 63  63 0 0 ..." http://127.0.0.1:8090/palette   # inject 48 values into SRAM
 ```
+
+## Web version
+
+**Try it: [bve.retrograde.tools](https://bve.retrograde.tools)**, nothing to install.
+
+The emulator also builds to WebAssembly and runs as a static site. Each browser keeps its own machine (setup, EDL,
+palette) in IndexedDB; **Reset…** in the top bar goes back to the default one.
+
+To build it you need Node and [Emscripten](https://emscripten.org/) in `~/emsdk`:
+
+```sh
+git clone --depth 1 https://github.com/emscripten-core/emsdk.git ~/emsdk
+(cd ~/emsdk && ./emsdk install latest && ./emsdk activate latest)
+```
+
+```sh
+npm run snapshot:web   # default machine: sampled from the emulator running on port 8090
+npm run build:web      # builds dist-web/ (BVE_SKIP_EMULATOR=1 reuses the last emulator build)
+npm run preview:web    # serves it at http://127.0.0.1:8091/
+npm run test:web       # boots it in headless Chrome and checks it
+npm run deploy:web     # builds and publishes to Cloudflare Pages (npx wrangler login first)
+```
+
+The Pages project is `bve9100-emulator`. The landing page is `web/landing.html`, and its changelog is
+`web/CHANGELOG.md`.
 
 ## More
 
