@@ -254,11 +254,13 @@ function layout(){
   // screen: largest SW:SH box inside the wrap (minus padding and the 6px border)
   const wrap=document.getElementById('screenwrap');
   const aw=wrap.clientWidth-20-12, ah=wrap.clientHeight-20-12;
-  const k=Math.max(0.1, Math.min(aw/SW, ah/SH));
-  const w=Math.floor(SW*k), h=Math.floor(SH*k), dpr=window.devicePixelRatio||1;
-  cv.style.width=w+'px'; cv.style.height=h+'px';
-  cv.width=Math.round(w*dpr); cv.height=Math.round(h*dpr);
-  ctx.setTransform(cv.width/SW,0,0,cv.height/SH,0,0);
+  const k=Math.max(0.1, Math.min(aw/SW, ah/SH)), dpr=window.devicePixelRatio||1;
+  // Whole device pixels per cell, so every cell edge lands on a pixel boundary; with a fractional
+  // scale the per-cell background fills leave anti-aliased seams (a faint grid) between characters.
+  const cw=Math.max(1, Math.floor(CW*k*dpr)), ch=Math.max(1, Math.floor(CH*k*dpr));
+  cv.width=cw*SW/CW; cv.height=ch*SH/CH;
+  cv.style.width=(cv.width/dpr)+'px'; cv.style.height=(cv.height/dpr)+'px';
+  ctx.setTransform(cw/CW,0,0,ch/CH,0,0);
   if(lastScr) render(lastScr);
 }
 window.addEventListener('resize',layout);
