@@ -6,14 +6,16 @@
 <title>BVE-9100</title>
 <style>
   :root { --bg:#1b1d20; --panel:#4a4c50; --key:#d9d7cf; --keytext:#1a1a1a; --blue:#8fb6e8; --red:#d9433b; --pink:#d78aa6; --yellow:#e6c33c; --purple:#9c93cf; --gray:#b9b7b0; --dark:#5b5d61; }
-  body { margin:0; background:var(--bg); color:#ddd; font-family: -apple-system, "Helvetica Neue", Arial, sans-serif; }
-  #top { display:flex; align-items:center; gap:14px; padding:8px 14px; background:#111; font-size:13px; }
+  html, body { height:100%; }
+  body { margin:0; background:var(--bg); color:#ddd; font-family: -apple-system, "Helvetica Neue", Arial, sans-serif;
+         display:flex; flex-direction:column; height:100vh; height:100dvh; overflow:hidden; }
+  #top { flex:none; display:flex; align-items:center; gap:14px; padding:8px 14px; background:#111; font-size:13px; }
   #top b { color:#fff; letter-spacing:1px; }
   #top input { width:140px; background:#222; color:#eee; border:1px solid #555; padding:3px 6px; font-family:monospace; }
   #top button { background:#333; color:#eee; border:1px solid #666; padding:3px 10px; cursor:pointer; }
-  #screenwrap { display:flex; justify-content:center; padding:10px; background:#000; }
-  canvas#screen { image-rendering: pixelated; border:6px solid #2a2a2a; border-radius:6px; }
-  #kbd { background:var(--panel); margin:10px auto; padding:14px 16px 18px; border-radius:10px; width:max-content; user-select:none;
+  #screenwrap { flex:1 1 auto; min-height:0; display:flex; justify-content:center; align-items:center; padding:10px; background:#000; }
+  canvas#screen { display:block; border:6px solid #2a2a2a; border-radius:6px; }
+  #kbd { flex:none; background:var(--panel); margin:10px auto; padding:14px 16px 18px; border-radius:10px; width:max-content; user-select:none;
          box-shadow: 0 10px 30px #000 inset, 0 2px 0 #666; }
   #kbd .brand { color:#eee; font-weight:700; letter-spacing:2px; font-size:14px; margin:0 0 6px 4px; display:flex; justify-content:space-between; width:1340px; }
   .blocks { display:flex; gap:18px; align-items:flex-start; }
@@ -238,6 +240,28 @@ document.addEventListener('keydown',e=>{
 //     half, ASCII = code-0x60); codes < 0x80 = halftone tiles        8 rounded frame corners
 // ---------------------------------------------------------------------------------------------
 const CW=12, CH=20, cv=document.getElementById('screen'), ctx=cv.getContext('2d');
+// Native screen size in cells * pixels; the canvas is scaled to fill the space above the keyboard and its
+// backing store follows the displayed size (times devicePixelRatio) so text stays sharp.
+const SW=960, SH=580;
+let lastScr=null;
+function layout(){
+  // keyboard: natural size, shrunk only if it does not fit the window width or would take over 60% of the height
+  const kbd=document.getElementById('kbd');
+  kbd.style.zoom=1;
+  const kw=kbd.offsetWidth, kh=kbd.offsetHeight;
+  const kz=Math.min(1, (window.innerWidth-20)/kw, 0.6*window.innerHeight/kh);
+  kbd.style.zoom=kz;
+  // screen: largest SW:SH box inside the wrap (minus padding and the 6px border)
+  const wrap=document.getElementById('screenwrap');
+  const aw=wrap.clientWidth-20-12, ah=wrap.clientHeight-20-12;
+  const k=Math.max(0.1, Math.min(aw/SW, ah/SH));
+  const w=Math.floor(SW*k), h=Math.floor(SH*k), dpr=window.devicePixelRatio||1;
+  cv.style.width=w+'px'; cv.style.height=h+'px';
+  cv.width=Math.round(w*dpr); cv.height=Math.round(h*dpr);
+  ctx.setTransform(cv.width/SW,0,0,cv.height/SH,0,0);
+  if(lastScr) render(lastScr);
+}
+window.addEventListener('resize',layout);
 // DIAG order: BLACK RED GREEN YELLOW BLUE MAGENTA CYAN WHITE, DARK GREEN, ASH BLUE, VERMILION, PALE PINK,
 // MOSS GREEN, LIGHT BLUE, BRIGHT YELLOW, GRAY
 const DEFPAL=['#ffffff','#ff2020','#20e020','#e0e020','#2040ff','#e020e0','#20e0e0','#e6e6e6','#003311','#4477aa','#ee5522','#ffbbcc','#557722','#88ccff','#ffff55','#777777'];
@@ -363,7 +387,7 @@ function drawTransition(b, fg){
 function render(scr){
   const pal=scr.pal ? scr.pal.map(crt) : DEFPAL;
   const ovpal=(scr.ovpal||[]).map(crt);
-  ctx.fillStyle='#000'; ctx.fillRect(0,0,cv.width,cv.height);
+  ctx.fillStyle='#000'; ctx.fillRect(0,0,SW,SH);
   ctx.textBaseline='middle'; ctx.lineWidth=2;
   const blocks=transitionBlocks(scr.rows), skip=new Set();
   for(const b of blocks) for(let rr=b.r; rr<=b.r+1; rr++) for(let c=b.c0;c<=b.c1;c++) if(scr.rows[rr][c][1]===3) skip.add(rr*80+c);
@@ -390,8 +414,9 @@ function render(scr){
   }
 }
 async function tick(){
-  try{ const scr=await fetch('/screen').then(r=>r.json()); render(scr); updateLamps(scr.lamps); }catch(e){}
+  try{ const scr=await fetch('/screen').then(r=>r.json()); lastScr=scr; render(scr); updateLamps(scr.lamps); }catch(e){}
 }
+layout();
 setInterval(tick,100); setInterval(()=>{blinkPhase^=1;},500); tick();
 </script>
 </body>
