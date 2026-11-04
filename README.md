@@ -7,10 +7,11 @@ Sony keyboard and virtual tape decks and switcher attached.
 
 ## Setup (once)
 
-You need macOS (or Linux) with Homebrew, a C++ compiler and Python 3.
+You need macOS or Linux, a C++ compiler and Python 3.
 
 ```sh
-brew install lhasa cmake
+brew install lhasa cmake                 # macOS
+sudo apt install lhasa cmake g++ unzip   # Linux (Debian/Ubuntu)
 ./tools/unpack_ref.sh          # unpacks the Sony installer disks from ref/ into work/
 cmake -B build && cmake --build build -j
 ```

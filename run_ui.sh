@@ -8,6 +8,6 @@ cd "$(dirname "$0")"
 mkdir -p work/run
 cp work/sys1.img work/run/a.img; cp work/sys2.img work/run/b.img
 PORT=${PORT:-8090}
-( sleep 2; open "http://127.0.0.1:$PORT/" 2>/dev/null || true ) &
+( sleep 2; { open "http://127.0.0.1:$PORT/" || xdg-open "http://127.0.0.1:$PORT/"; } >/dev/null 2>&1 || true ) &
 exec ./build/bve9100 --boot work/raw/rms.abs --disk-a work/run/a.img --disk-b work/run/b.img \
      --sram work/run/sram.bin --eeprom work/run/eeprom.bin --http "$PORT" "$@"

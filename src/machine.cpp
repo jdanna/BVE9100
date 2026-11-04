@@ -9,6 +9,7 @@ extern "C" unsigned int m68k_pmmu_enabled(void);
 #include <thread>
 #include <map>
 #include <algorithm>
+#include <sstream>
 
 static volatile bool g_stop = false;
 static void on_sigint(int) { g_stop = true; }
