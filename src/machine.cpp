@@ -1,4 +1,5 @@
 #include "machine.h"
+#include "devices/idc_peers.h"
 #include "tty_frontend.h"
 extern "C" unsigned int pmmu_translate_addr(unsigned int addr_in);
 extern "C" unsigned int m68k_pmmu_enabled(void);
@@ -60,6 +61,36 @@ Machine::Machine(const MachineConfig& cfg) : cfg_(cfg) {
 
     // ---- IF-508 Ethernet board (the BZE-9102 "network system" software requires it) ---------
     if (!cfg.no_if508) { if508 = std::make_unique<If508>(&irq); bus.map(0x0FF02000, 0x2000, if508.get()); }
+
+    // ---- RS-422 interface boards (VTR / switcher ports) in option slots BKE#0..#6 ----------------
+    // Port letters follow the kernel's channel numbering: port n (A = 0) is slot n/4, channel n%4.
+    std::vector<MachineConfig::DeviceSpec> devs = cfg.devices;
+    if (devs.empty() && !cfg.no_devices)
+        devs = {{0, "vtr", 0x0101}, {1, "vtr", 0x0101}, {2, "vtr", 0x0101}, {3, "vtr", 0x0101}, {4, "switcher", 0x1001}};
+    std::vector<std::pair<int,uint16_t>> boards = cfg.rs422;
+    for (auto& d : devs) {
+        bool have = false;
+        for (auto& b : boards) if (b.first == d.port / 4) have = true;
+        if (!have) boards.push_back({d.port / 4, 0x200F});
+    }
+    for (auto& b : boards) {
+        if (b.first < 0 || b.first > 6) continue;
+        rs422.push_back(std::make_unique<Rs422Board>(b.first, b.second, &irq, 3));
+        bus.map(0x0FFF9000 + b.first * 0x1000, 0x1000, rs422.back().get());
+        LOGI("RS422: board ID %04x in slot %d (0x%08x)\n", b.second, b.first, 0x0FFF9000 + b.first * 0x1000);
+    }
+    for (auto& d : devs) {
+        std::shared_ptr<IdcDevice> p;
+        if (d.kind == "vtr") p = std::make_shared<VirtualVtr>(d.type ? d.type : 0x0101);
+        else if (d.kind == "switcher") p = std::make_shared<VirtualSwitcher>(d.type ? d.type : 0x1001);
+        else if (d.kind == "probe") p = std::make_shared<IdcProbe>();
+        else { fprintf(stderr, "unknown device kind '%s'\n", d.kind.c_str()); continue; }
+        char port = (char)('A' + d.port);
+        p->label = std::string(d.kind == "vtr" ? "VTR-" : "SW-") + port;
+        for (auto& b : rs422) if (b->slot() == d.port / 4) b->attach(d.port % 4, p);
+        peers.push_back({port, p});
+        LOGI("RS422: port %c = %s (IDC type %04x)\n", port, d.kind.c_str(), p->idc_type());
+    }
 
     // ---- SIO-4 RS-232C channels (ptp, tty, smc, aux) ----------------------------
     static const char* sio_names[4] = {"SIO4.PTP", "SIO4.TTY", "SIO4.SMC", "SIO4.AUX"};
@@ -216,9 +247,11 @@ void Machine::run() {
         if (cfg_.keyassign_default && !keyassign_done_ && pc == 0x01010e98 && g_cycles > 1500000000ull && current_task().find("MAIN") != std::string::npos) hle_keyassign_default();
         for (auto t : cfg_.tracepoints) if (pc == t) {
             uint32_t sp = m68k_get_reg(nullptr, M68K_REG_SP);
+            // in user mode the C arguments sit on the user stack at logical addresses (translate through the PMMU)
+            auto rd32 = [&](uint32_t la) { uint32_t pa = la; if (la >= 0x80000000 && m68k_pmmu_enabled()) pa = pmmu_translate_addr(la & ~0x3FFu) + (la & 0x3FF); return bus.read32(pa); };
             fprintf(stderr, "[%10llu] TP %s%s  D0=%08x D1=%08x D7=%08x A0=%08x SP=%08x args=%08x %08x %08x ret=%08x\n", (unsigned long long)g_cycles, symbolize(pc).c_str(), current_task().c_str(),
                 m68k_get_reg(nullptr, M68K_REG_D0), m68k_get_reg(nullptr, M68K_REG_D1), m68k_get_reg(nullptr, M68K_REG_D7), m68k_get_reg(nullptr, M68K_REG_A0), sp,
-                bus.read32(sp + 4), bus.read32(sp + 8), bus.read32(sp + 12), bus.read32(sp));
+                rd32(sp + 4), rd32(sp + 8), rd32(sp + 12), rd32(sp));
             {   // block addressed by A0 (kernel syscall parameter block) and the pointer stored at A0+8 (message)
                 uint32_t a0 = m68k_get_reg(nullptr, M68K_REG_A0);
                 if (a0 >= 0x80000000 && m68k_pmmu_enabled()) a0 = pmmu_translate_addr(a0);
@@ -236,6 +269,16 @@ void Machine::run() {
                         }
                     }
                 }
+            }
+            {   // user-mode call chain: return addresses found on the user stack (application code is at 0x8xxxxxxx / 0xCxxxxxxx)
+                uint32_t usp = m68k_get_reg(nullptr, M68K_REG_USP);
+                fprintf(stderr, "             USP=%08x stack:", usp);
+                for (int i = 0; i < 24 && m68k_pmmu_enabled(); i++) {
+                    uint32_t la = usp + 4 * i, pa = pmmu_translate_addr(la & ~0x3FFu) + (la & 0x3FF);
+                    uint32_t v = bus.read32(pa);
+                    if ((v >> 28) == 0x8 || (v >> 28) == 0xC) fprintf(stderr, " %08x", v);
+                }
+                fprintf(stderr, "\n");
             }
             for (auto& td : cfg_.tp_dumps) {
                 fprintf(stderr, "             mem %08x:", td.first);
@@ -274,6 +317,24 @@ void Machine::run() {
         httpd_.handler = [this](const Httpd::Request& r) {
             Httpd::Response resp;
             if (r.path == "/screen") { resp.type = "application/json"; resp.body = dsc->screen_json(); }
+            else if (r.path == "/devices") {                 // state of the virtual RS-422 devices
+                std::string j = "[";
+                for (auto& pp : peers) {
+                    std::string st = pp.peer->status_json();
+                    if (j.size() > 1) j += ",";
+                    j += "{\"port\":\"" + std::string(1, pp.port) + "\"," + st.substr(1);
+                }
+                resp.type = "application/json"; resp.body = j + "]";
+            }
+            else if (r.path.rfind("/devices/", 0) == 0 && r.method == "POST") {   // body: "<command> [arg]"
+                char port = r.path.size() > 9 ? (char)toupper(r.path[9]) : 0;
+                std::string cmd = r.body, arg;
+                while (!cmd.empty() && isspace((unsigned char)cmd.back())) cmd.pop_back();
+                size_t sp = cmd.find(' '); if (sp != std::string::npos) { arg = cmd.substr(sp + 1); cmd = cmd.substr(0, sp); }
+                bool ok = false;
+                for (auto& pp : peers) if (pp.port == port) ok = pp.peer->control(cmd, arg);
+                resp.status = ok ? 200 : 400; resp.body = ok ? "ok" : "unknown device or command";
+            }
             else if (r.path == "/status") {
                 char b[256]; snprintf(b, sizeof b, "{\"cycles\":%llu,\"seconds\":%.2f,\"leds\":%u,\"realtime\":%s}", (unsigned long long)g_cycles, (double)g_cycles / CPU_HZ, misc->leds, cfg_.realtime ? "true" : "false");
                 resp.type = "application/json"; resp.body = b;

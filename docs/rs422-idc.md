@@ -1,0 +1,126 @@
+# RS-422 interface boards and the IDC protocol
+
+The BVE-9100 does not speak Sony 9-pin to the decks itself. Each RS-422 interface board (SIO-3 BKE-9002,
+IF-263, IF-328 BKE-9012/9014, IF-342) carries an **IDC** ("intelligent device controller") sub-CPU that
+runs the line protocol to the device. The 68030 talks to the IDC through dual-port RAM using short
+messages. Everything below was worked out from the SRMS kernel (`supsio3`, `ptcmdidc`, `ptprdcmd`,
+`intrd`/`intred`, `i_semsg`), STRAPL, MAIN, the DIAG board test, and by booting the emulator with
+virtual boards and logging what the application sends. Items marked *(guess)* work with the
+application but are not confirmed against hardware.
+
+## Board window
+
+Option slot n (0-6) is at `0x0FFF9000 + n*0x1000`. Each 4 KB window is 4 channels of 1 KB. Port letters on
+the DEVICE ASSIGNMENT page follow the kernel numbering: port A = slot 0 channel 0, B = slot 0 channel 1,
+E = slot 1 channel 0, and so on (28 ports, A-Z then a, b).
+
+| Offset (per channel) | Use |
+|---|---|
+| `+000` | RX: the latest reply message. The kernel posts the first `+3B8` bytes of it to the requesting task |
+| `+120..1FF` | replies to the periodic slots; `+3B0 + 2k` holds the offset (from `+120`) of slot k's reply, 0 or FFFF = none |
+| `+200` | TX: one host message (one-shot command); writing its length to `+398` sends it |
+| `+300 + 0x20*k` | periodic command slot k = 1..3; length at `+398 + 2k`, period at `+390 + 2k` (high byte = fields) |
+| `+380` (w) | host command: 3 = reset channel, 2 = acknowledge error |
+| `+382` (w) | line format, kernel writes 0x0A77 |
+| `+384` / `+386` (w) | interrupt vectors: reply ready (0x60 + 2·port) / error or time-out (0x61 + 2·port) |
+| `+3A0` (w) | channel status: bit 15 present, bits 8-9 ready; `+3A1` = error code after a failure |
+| `+3B8` (w) | length of the RX message |
+| board `+3C0` (w) | 1 = start, 3 = reset |
+| board `+3FC` (w) | firmware version |
+| board `+3FE` (w) | board ID: `0x2xxx` = RS-422 board, bits 0-3 = channels fitted (`0x100F` = SIO-4 RS-232) |
+
+## Messages
+
+`[type, len, cmd, sub, data...]`. Type 0x02 is a normal message. The application's message constants carry
+no checksum (the kernel copies one extra byte). Replies use the same layout with the command byte plus
+0x10 (`09 00` → `19 00`, `61 20` → `71 20`).
+
+In the RX area the first byte is a result code that STRAPL dispatches on: 4 = reply to the pending
+command, 2 = data message for the device-class handler, 5 / 0xFF = error.
+
+### IDC housekeeping (any device class)
+
+| Message | Meaning |
+|---|---|
+| `09 00` → `19 00 TT TT` | status poll (periodic slot 3); TT TT = IDC device type, see below |
+| `09 01` → `19 01 vv vv` | IDC version (DIAG) |
+| `08 00` → `18 00 xx xx` | device state poll (slot 3, every 31 fields once a device is found) |
+| `01 00 00` | mode set at start-up *(reply: ack)* |
+| `42 xx yy`, `23 00`, `43 20 ...` | parameter set-up; `43 20` downloads the VTR model table from `VTRC30.IDT` / `VTRC25.IDT` |
+
+### IDC device type word (reply to `09 00`)
+
+| Type | Device class shown on DEVICE ASSIGNMENT |
+|---|---|
+| `01xx` | VTR |
+| `02xx` | ATR |
+| `03xx` | DISP |
+| `1xxx` | SW'ER (video switcher) |
+| `2xxx` | GPI |
+| `3xxx` | DME |
+| `4xxx` | CHANGER |
+| `5xxx` | COLOR |
+| `Exxx` | DISK |
+
+### VTR
+
+Status sense runs in periodic slot 2 every field: `61 20 1F` (data byte = mask of blocks wanted). Reply:
+
+```
+02 len 71 20 mask
+  bit0: tc-type (bit7 set = no '.' after TC), frame count (4 bytes, big-endian), 4 more bytes
+  bit1: s0, s1   s0 = 0xC0 when the IDC is talking to the deck and the deck is in remote
+                 (0x80 alone shows LOCL / TOUT, otherwise XXXX); s1 = transport:
+                 04 STOP, 0C FF, 0D REW, 10 forward (var/jog), 11 reverse, 12 STILL
+  bit2: 2 bytes (unknown)
+  bit3: servo group, play code, lock, extra (02 12 20 00 shows PLAY)
+  bit4: 1 byte (unknown)
+```
+
+Transport commands seen from the keyboard:
+
+| Key | Message |
+|---|---|
+| STOP | `20 00` |
+| PLAY | `20 01` |
+| STILL | `20 03` |
+| FF | `20 06` |
+| REW | `20 07` |
+
+| SHTL | `20 12` (dial speed messages not captured yet) |
+| JOG | `20 10` |
+| GO TO (deck selected, timecode typed, SET IN, GO TO) | `22 05` + target as a 4-byte frame count |
+
+`61 10 01` is polled too; the emulator answers with a `71 10` data message (24 bytes, contents guessed).
+
+PREVIEW / edit set-up sends to each deck involved: `40 00 <time>`, `21 08`, `42 0x ..`, `40 10 00 00 00 96`
+(150 frames), `40 11`, `40 01 <R in> <R in>`, `40 02 <t>`, `40 03 <t + 150>`, `40 05 <this deck's in> <in>`,
+`42 01 00 00`, `42 03 05`, `41 00`, `22 14 00 08` (cue to in point minus pre-roll) and `44 12 00 00 00 01`.
+
+The servo block of the status reply (bit3) drives the handshake: `02 00 08 00` while cueing, then
+`02 00 10 00` once parked. Without the "parked" code the editor reports NOT READY. Once every deck is parked
+the editor sends `60 03`, then `23 00` to all decks in the same instant: the synchronised start. The decks
+roll from the pre-roll point (`02 12 20 00` = PLAY, `31` shows LOCK, `48` SYNC).
+
+Not decoded yet: how the IDC reports edit progress (edit point reached, post-roll finished). Without it the
+editor never ends the preview, so the decks keep playing until stopped.
+
+### Switcher
+
+With a SW'ER IDC on the port chosen as switcher, slot 1 polls the switcher every 3 fields: `64 80` for
+type words with bit 0x40 clear, `6C 80 00 83` with it set. Both are answered by
+`7C 80 00 flags status(2) [bit0: 4 bytes] [bit1: 2 bytes] [bit7: 2 bytes]`; status 0 = no fault. At
+start-up the editor also sends `42 00 00` and `24 1F 00 FF 00 FF 00 FF`. SWMEM only records a switcher
+memory number in the edit; the recall is sent when an edit is previewed or executed (not yet captured).
+
+## Emulator
+
+`src/devices/rs422.cpp` implements the board (window, one-shot and periodic slots, vectors);
+`src/devices/idc_peers.cpp` holds the IDC behaviour and the virtual devices. By default the emulator fits
+VTRs on ports A-D and a switcher on port E (`--device P=KIND[:TYPE]`, `--no-devices`). After the first
+boot with devices, assign them once: INIT, F3 (ASSIGN), F7, F4 (DFLT ALL), YES. This gives R = A,
+P1-P3 = B-D and is kept in SRAM.
+
+HTTP: `GET /devices` returns each device's state. `POST /devices/<port>` with a body of `play`, `stop`,
+`ff`, `rew`, `still`, `rec`, `eject`, `load`, `goto <frame>` (VTR) or `pgm N`, `pst N`, `cut` (switcher)
+drives a device from outside the editor. This is the hook for connecting players or OBS later.

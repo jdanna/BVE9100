@@ -40,6 +40,8 @@ add_executable(bve9100
   src/devices/dmac.cpp
   src/devices/mailbox.cpp
   src/devices/if508.cpp
+  src/devices/rs422.cpp
+  src/devices/idc_peers.cpp
   src/devices/rtc.cpp
   src/devices/fdc.cpp
   src/devices/scsi_wd33c93.cpp
@@ -50,3 +52,7 @@ add_executable(bve9100
 target_include_directories(bve9100 PRIVATE src)
 target_link_libraries(bve9100 PRIVATE musashi)
 target_compile_options(bve9100 PRIVATE -Wall -Wextra -Wno-unused-parameter)
+
+# ---- Tools ---------------------------------------------------------------
+add_executable(m68kdis tools/m68kdis/m68kdis.cpp)
+target_link_libraries(m68kdis PRIVATE musashi)

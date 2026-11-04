@@ -11,6 +11,7 @@
 #include "devices/rtc.h"
 #include "devices/fdc.h"
 #include "devices/scsi_wd33c93.h"
+#include "devices/rs422.h"
 #include "devices/cpu88_misc.h"
 #include "devices/dsc63.h"
 #include "devices/spf.h"
@@ -51,6 +52,10 @@ struct MachineConfig {
     std::vector<std::string> mem_dumps;  // ADDR:LEN:FILE written at exit
     struct SwapEvent { uint64_t cycle; int drive; std::string image; bool done = false; };
     std::vector<SwapEvent> swaps;        // floppy changes at a given cycle
+    std::vector<std::pair<int,uint16_t>> rs422;   // RS-422 interface boards: option slot, board ID
+    struct DeviceSpec { int port; std::string kind; uint16_t type; };   // port 0 = 'A' = slot 0 channel 0
+    std::vector<DeviceSpec> devices;     // virtual devices on RS-422 ports (default: VTRs on A-D, switcher on E)
+    bool no_devices = false;
 };
 
 class Machine {
@@ -75,6 +80,9 @@ public:
     std::unique_ptr<Eeprom> eeprom;
     std::vector<std::unique_ptr<MailboxPort>> sio4;
     std::unique_ptr<If508> if508;
+    std::vector<std::unique_ptr<Rs422Board>> rs422;
+    struct PortPeer { char port; std::shared_ptr<SerialPeer> peer; };
+    std::vector<PortPeer> peers;         // virtual devices, for the HTTP /devices endpoint
     void place_module(const AbsModule& m);
     std::string symbolize(uint32_t addr) const;
     std::string current_task();

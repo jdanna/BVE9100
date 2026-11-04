@@ -32,6 +32,10 @@ static void usage() {
         "  --realtime         pace the emulation to real time (default: as fast as possible)\n"
         "  --keymap FILE      host key -> keyboard byte mapping (see keymap.txt)\n"
         "  --vram-dump FILE   write the DSC-63 VRAM (for analysis) at exit\n"
+        "  --rs422 SLOT[:ID]  add an RS-422 interface board (option slot 0-6, board ID hex, default 200F)\n"
+        "  --device P=KIND[:TYPE]  virtual device on RS-422 port P (A..): vtr, switcher (IDC type hex);\n"
+        "                     default: VTRs on A-D, switcher on E\n"
+        "  --no-devices       no RS-422 boards or virtual devices\n"
         "  --mem-dump A:L:F   write L bytes of physical memory from A (hex) to file F at exit (repeatable)\n"
         "  --buserr           raise a 68030 bus error on unmapped addresses (default: read as 0xFF, open bus)\n"
         "  --no-color         plain text screen dump\n"
@@ -68,6 +72,19 @@ int main(int argc, char** argv) {
         }
         else if (a == "--mem-dump") cfg.mem_dumps.push_back(next());
         else if (a == "--realtime") cfg.realtime = true;
+        else if (a == "--device") {         // --device PORT=KIND[:TYPE]  e.g. A=vtr, E=switcher:1001
+            std::string v = next(); size_t e = v.find('='), c = v.find(':');
+            if (e != 1 || !isalpha((unsigned char)v[0])) { usage(); return 2; }
+            MachineConfig::DeviceSpec d; d.port = toupper(v[0]) - 'A';
+            d.kind = v.substr(2, c == std::string::npos ? std::string::npos : c - 2);
+            d.type = (uint16_t)(c == std::string::npos ? 0 : strtoul(v.substr(c + 1).c_str(), nullptr, 16));
+            cfg.devices.push_back(d);
+        }
+        else if (a == "--no-devices") cfg.no_devices = true;
+        else if (a == "--rs422") {          // --rs422 SLOT[:ID]  RS-422 interface board in option slot 0-6 (ID hex, default 200F)
+            std::string v = next(); size_t c = v.find(':');
+            cfg.rs422.push_back({atoi(v.substr(0, c).c_str()), (uint16_t)(c == std::string::npos ? 0x200F : strtoul(v.substr(c + 1).c_str(), nullptr, 16))});
+        }
         else if (a == "--keymap") cfg.keymap = next();
         else if (a == "--key") {            // --key CYCLE:HH[,HH...]  raw keyboard bytes delivered to the DSC-63 keyboard port
             std::string v = next(); size_t c = v.find(':');

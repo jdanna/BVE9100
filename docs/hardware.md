@@ -13,7 +13,7 @@ Items marked *(assumed)* are emulator choices that the firmware tolerates but th
 | **CPU-88** | Main CPU: MC68030 @ 20 MHz, 4 MB DRAM (16 MB "BDRAM" option), 512 KB battery-backed SRAM (1 MB with DSK-6), 2 KB EEPROM, 2 x 8254 timers, 2 x 8259A interrupt controllers, 8251 debug USART, custom DMA controller, WD177x-class floppy controller ("MFD block"), WD33C93 SCSI (BKE-9107 HDD), RTC, LEDs, DIP switches, monitor EPROM "9100M0" (V1.11 last) | – |
 | **DSC-63** | Colour/mono VDU text display (80x29, 16 colours, 4 CG banks), keyboard interface, RS-232C printer interface; both ports are mailbox-driven sub-processors | – |
 | **SPF-1/2/2A/3/4/4A/5** | Reference video (NTSC/PAL), colour framing, field interrupt, 4 GPI outputs (two 8254s used as pulse timers) | – |
-| **SIO-3 / IF-51 / IF-263 / IF-328 / IF-342** | RS-422 device interfaces, 4 channels each, with an "IDC" sub-CPU (68000 code downloaded from disk, e.g. `MIXER.IDC`) | BKE-9002 / BKE-9004A / BKE-9012 / BKE-9014 |
+| **SIO-3 / IF-51 / IF-263 / IF-328 / IF-342** | RS-422 device interfaces, 4 channels each, with an "IDC" sub-CPU that runs the device protocol (mixer IDCs load 68000 code such as `MIXER.IDC`). Host protocol: `docs/rs422-idc.md` | BKE-9002 / BKE-9004A / BKE-9012 / BKE-9014 |
 | **SIO-4** | 4 x RS-232C (ptp, tty, smc, aux), mailbox-driven | BKE-9003 |
 | **IF-508** | Ethernet board (MIPS ECOFF firmware `IF508A/B.OBJ`), talks to an SGI Indy ("simplefile" TCP 9100) | – |
 | **DSK-6** | extra SRAM window 0x880000-0x8FFFFF | – |
@@ -61,8 +61,26 @@ Items marked *(assumed)* are emulator choices that the firmware tolerates but th
 * `1C980/82/84/86` (w): partition 0-3 start = (VRAM address - 0xD000000) >> 2; `1C990/92/94/96` (w): partition line counts (29 total). The application runs with partition 0 at 0x2440 (VRAM 0x9100).
 * `1C9A0` (w) cursor address, `1C9A2` cursor shape/control, `1C9A4` misc; `1C9C0` (w) control (0x8000 display on; app writes 0xC001); `1C9C8` (r) bit0 busy.
 * `1CA00-1CAFF` keyboard mailbox, `1CC00-1CCFF` printer mailbox, `1CFFE` (w) update strobe.
-* Cell format: word0 = `0x5000 | CGbank<<8 | char`, word1 = `colour(0-15) | blink<<14 | reverse<<15`; 0x140 bytes per 80-column row.
-* Colours (DIAG): 0 black .. 7 white plus DARK GREEN, ASH BLUE, VERMILION, PALE PINK, MOSS GREEN, LIGHT BLUE, BRIGHT YELLOW.
+* Two register sets of four partitions (`1C980-1C986` starts, `1C990-1C996` row counts; a second set at
+  `1C988`/`1C998`). Displayed rows are the partitions stacked top to bottom (DEVICE ASSIGNMENT scrolls its
+  port list in partition 1 under a fixed header).
+* Main plane cell: word0 = `0x5000 | CGbank<<8 | char`, word1 = `fg(bits 0-3) | bg(bits 8-11) | blink<<14 |
+  reverse<<15` (bits 4-7 are 8 in application screens, meaning unknown); 0x140 bytes per row.
+* Overlay ("pop-up") plane at `0x0D010000`, same addressing: byte0 = CG bank, byte1 = char, byte3 = colours
+  (bits 0-3 fg, 4-7 bg, overlay palette, bg 0 = transparent); a cell with bytes 0 and 3 zero is transparent.
+  Used for pop-up windows, colour swatches and selection highlights.
+* Main palette at `1C800`: 16 entries x 16 bytes = four 6-bit RGB triples (colour, half, reverse, reverse).
+  Overlay palette at `1C900`: 16 x 4 bytes. Both are loaded by the application; boot screens use defaults.
+* Colour order (DIAG): BLACK, RED, GREEN, YELLOW, BLUE, MAGENTA, CYAN, WHITE, DARK GREEN, ASH BLUE,
+  VERMILION, PALE PINK, MOSS GREEN, LIGHT BLUE, BRIGHT YELLOW, GRAY. The application loads colour 0 as white
+  (frame lines) and uses colour 8 (very dark green) as the screen background.
+* CG banks (from MDISP code and photos): 0 ASCII, 0x80-0xDF frame lines, 0xE0-0xFF small capitals set into
+  frame lines; 1 alternative ASCII; 2 small font, 0x00-0x1F pop-up frame pieces; 3 timeline graphics
+  (0x80-0x85 hollow bar, 0x8C-0x8E solid bar, 0x93/0x94/0x9B transition bar, 0xA2-0xB0 transition ramps,
+  0xDD/0xDE edit markers); 4 highlighted small text; 5 inverse ASCII (F-key strip, 0x9A divider,
+  0x9B left edge); 6 inverse double-width; 7 double-width (0x80-0xBF left half, +0x40 right half,
+  ASCII = code - 0x60), codes < 0x80 halftone; 8 rounded frame corners 0xD6-0xD9. Glyph shapes are
+  drawn by the UI from these roles; the CG ROM itself is not dumped.
 
 ### Mailbox sub-processor ports (keyboard, printer, SIO-4 channels)
 

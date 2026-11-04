@@ -49,11 +49,11 @@ void Dsc63::write16(uint32_t off, uint16_t v) { write8(off, (uint8_t)(v >> 8)); 
 std::vector<std::string> Dsc63::render_text() const {
     std::vector<std::string> out;
     // Partition 0 start address (default 0): rows are 0x140 bytes
-    uint32_t start = (((uint32_t)regs_[0x180] << 8) | regs_[0x181]) << 2;
+    std::vector<uint32_t> bases = row_bases();
     for (int row = 0; row < 29; row++) {
         std::string line;
         for (int col = 0; col < 80; col++) {
-            uint32_t a = (start + row * 0x140 + col * 4) & 0xFFFF;
+            uint32_t a = (bases[row] + col * 4) & 0xFFFF;
             const uint8_t* cell = &vram_[a];
             if (a + 3 < plane2_.size()) { const uint8_t* p = &plane2_[a]; if (p[1] != 0x20 && (p[0] | p[1])) cell = p; }
             uint8_t ch = cell[1], font = cell[0] & 0x0F;
@@ -68,13 +68,13 @@ std::vector<std::string> Dsc63::render_text() const {
     return out;
 }
 void Dsc63::dump_screen(FILE* out, bool color) const {
-    uint32_t start = (((uint32_t)regs_[0x180] << 8) | regs_[0x181]) << 2;
+    std::vector<uint32_t> bases = row_bases();
     fprintf(out, "+%s+\n", std::string(80, '-').c_str());
     for (int row = 0; row < 29; row++) {
         fputc('|', out);
         int last_attr = -1;
         for (int col = 0; col < 80; col++) {
-            uint32_t a = (start + row * 0x140 + col * 4) & 0xFFFF;
+            uint32_t a = (bases[row] + col * 4) & 0xFFFF;
             const uint8_t* cell = &vram_[a];
             // pop-up plane (0x0D010000) overlays the main plane where it holds a non-blank cell
             if (a + 3 < plane2_.size()) { const uint8_t* p = &plane2_[a]; if (p[1] != 0x20 && (p[0] | p[1])) cell = p; }
@@ -106,22 +106,70 @@ void Dsc63::save_vram(const std::string& path) const {
     LOGI("DSC63: VRAM dumped to %s (vram 0x10000, plane2 0xC000, regs 0x800)\n", path.c_str());
 }
 
-std::string Dsc63::screen_json() const {
-    std::string out; out.reserve(40000);
+// Display rows come from up to four partitions: partition n starts at VRAM byte (word at 0x1C980+2n) << 2 and
+// shows (word at 0x1C990+2n) rows; the partitions are stacked top to bottom (the application uses this to scroll
+// a list under a fixed header, e.g. DEVICE ASSIGNMENT). With no row counts programmed, partition 0 fills the screen.
+std::vector<uint32_t> Dsc63::row_bases() const {
+    std::vector<uint32_t> b;
+    for (int p = 0; p < 4 && b.size() < 29; p++) {
+        uint32_t start = (((uint32_t)regs_[0x180 + 2 * p] << 8) | regs_[0x181 + 2 * p]) << 2;
+        int n = (regs_[0x190 + 2 * p] << 8) | regs_[0x191 + 2 * p];
+        for (int r = 0; r < n && b.size() < 29; r++) b.push_back((start + r * 0x140) & 0xFFFF);
+    }
     uint32_t start = partition_start();
+    if (b.empty()) for (int r = 0; r < 29; r++) b.push_back((start + r * 0x140) & 0xFFFF);
+    while (b.size() < 29) b.push_back((b.back() + 0x140) & 0xFFFF);
+    return b;
+}
+
+std::string Dsc63::screen_json() const {
+    // Main plane (0x0D000000): cells [char, CG bank, attr]; attr bits 0-3 fg, 8-11 bg (main palette), 14 blink,
+    // 15 reverse. Overlay plane (0x0D010000, same addressing): byte0 = CG bank, byte3 = colours (bits 0-3 fg,
+    // 4-7 bg, overlay palette; bg 0 = transparent). A cell is transparent when bytes 0 and 3 are both zero.
+    std::string out; out.reserve(48000);
+    std::vector<uint32_t> bases = row_bases();
+    std::string ov;
     out += "{\"rows\":[";
     for (int row = 0; row < 29; row++) {
         out += row ? ",[" : "[";
         for (int col = 0; col < 80; col++) {
-            uint32_t a = (start + row * 0x140 + col * 4) & 0xFFFF;
+            uint32_t a = (bases[row] + col * 4) & 0xFFFF;
             const uint8_t* cell = &vram_[a];
-            if (a + 3 < plane2_.size()) { const uint8_t* p = &plane2_[a]; if (p[1] != 0x20 && (p[0] | p[1])) cell = p; }
-            char b[32]; snprintf(b, sizeof b, "%s[%d,%d,%d]", col ? "," : "", cell[1], cell[0] & 0x0F, (cell[2] << 8) | cell[3]);
+            char b[48]; snprintf(b, sizeof b, "%s[%d,%d,%d]", col ? "," : "", cell[1], cell[0] & 0x0F, (cell[2] << 8) | cell[3]);
+            out += b;
+            if (a + 3 < plane2_.size()) {
+                const uint8_t* p = &plane2_[a];
+                if (p[0] || p[3]) {
+                    snprintf(b, sizeof b, "%s[%d,%d,%d,%d,%d]", ov.empty() ? "" : ",", row, col, p[1], p[0] & 0x0F, p[3]);
+                    ov += b;
+                }
+            }
+        }
+        out += "]";
+    }
+    out += "],\"ov\":[" + ov + "]";
+    char tail[128]; snprintf(tail, sizeof tail, ",\"cursor\":%u,\"ctl\":%u", (unsigned)(((regs_[0x1A0] << 8) | regs_[0x1A1])), (unsigned)((regs_[0x1C0] << 8) | regs_[0x1C1]));
+    out += tail;
+    auto c8 = [](uint8_t v) { return (unsigned)((v & 0x3F) * 255 / 63); };
+    // Main palette (0x0D01C800): 16 entries x four 6-bit RGB triples [colour, half, reverse, reverse].
+    bool loaded = false;
+    for (int i = 0; i < 0x100; i++) if (regs_[i]) { loaded = true; break; }
+    if (loaded) {
+        out += ",\"pal\":[";
+        for (int i = 0; i < 16; i++) {
+            char b[96]; const uint8_t* e = &regs_[i * 16];
+            snprintf(b, sizeof b, "%s[%u,%u,%u,%u,%u,%u]", i ? "," : "", c8(e[0]), c8(e[1]), c8(e[2]), c8(e[8]), c8(e[9]), c8(e[10]));
             out += b;
         }
         out += "]";
     }
-    char tail[128]; snprintf(tail, sizeof tail, "],\"cursor\":%u,\"ctl\":%u}", (unsigned)(((regs_[0x1A0] << 8) | regs_[0x1A1])), (unsigned)((regs_[0x1C0] << 8) | regs_[0x1C1]));
-    out += tail;
+    // Overlay palette (0x0D01C900): 16 x [r, g, b, 0]
+    out += ",\"ovpal\":[";
+    for (int i = 0; i < 16; i++) {
+        char b[48]; const uint8_t* e = &regs_[0x100 + i * 4];
+        snprintf(b, sizeof b, "%s[%u,%u,%u]", i ? "," : "", c8(e[0]), c8(e[1]), c8(e[2]));
+        out += b;
+    }
+    out += "]}";
     return out;
 }

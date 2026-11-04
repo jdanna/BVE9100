@@ -29,6 +29,7 @@ public:
     void dump_screen(FILE* out, bool color) const;
     void save_vram(const std::string& path) const;   // raw VRAM + plane2 + registers for offline analysis
     std::string screen_json() const;                  // 29 rows x 80 cells of [char, font, attr] (pop-up plane merged)
+    std::vector<uint32_t> row_bases() const;      // VRAM byte address of each of the 29 display rows
     uint32_t partition_start() const { return (((uint32_t)regs_[0x180] << 8) | regs_[0x181]) << 2; }
     bool screen_dirty = false;
     uint8_t kbd_type = 0x43;                 // value answered to the keyboard 'R','Z' request (type/version byte)

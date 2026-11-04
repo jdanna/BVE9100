@@ -72,3 +72,14 @@ work/           generated, ignored by git
 
 With Ghidra installed at `$GHIDRA_HOME` (default `~/ghidra`): `analysis/ghidra/batch_ghidra.sh` writes
 `work/ghidra/out/<module>.{c,asm,funcs}`. The checked-in `analysis/decomp/*.c.gz` are those outputs.
+
+## Virtual VTRs and switcher
+
+The emulator fits RS-422 interface boards with virtual devices: VTRs on ports A-D and a video switcher on
+port E (`--device P=KIND[:TYPE]` to change, `--no-devices` to remove). Assign them once in the editor:
+INIT, F3 (ASSIGN), F7, F4 (DFLT ALL), YES; this puts R on A and P1-P3 on B-D and is kept in SRAM. The reel
+lines then show timecode and transport state; PLAY, STOP, STILL, FF, REW, JOG/SHTL and GO TO (select deck,
+type timecode, SET IN, GO TO) work. Preview cues the decks to their pre-roll points and rolls them together, but does not end yet (stop the decks by hand). `GET /devices`
+shows device state and `POST /devices/<port>` (body `play`, `stop`, `cue <frame>`, ...) drives a device from
+outside; this is where video players or OBS will connect. Protocol notes: `docs/rs422-idc.md`.
+

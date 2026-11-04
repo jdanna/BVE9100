@@ -40,13 +40,7 @@
 </style>
 </head>
 <body>
-<div id="top">
-  <b>SONY BVE-9100</b>
-  <span id="status">connecting…</span>
-  <label>raw bytes (hex): <input id="raw" placeholder="82 03 57 00 56 53"></label><button id="sendraw">send</button>
-  <label><input type="checkbox" id="physkb" checked> type on this keyboard</label>
-  <span style="margin-left:auto;color:#999">hover a key for its wire codes · SHIFT/CTRL arm the next key · without VTR interfaces most editing keys have no visible effect</span>
-</div>
+<div id="top"><b>BVE-9100</b></div>
 <div id="screenwrap"><canvas id="screen" width="960" height="580"></canvas></div>
 <div id="kbd">
   <div class="brand"><span>SONY</span><span>BVE-9100 SYSTEM</span></div>
@@ -175,14 +169,11 @@ fill('left',LEFT); fill('main',MAIN); fill('right',RIGHT); DIAL.forEach(k=>docum
 
 function log(s){ /* key traffic is not shown in the UI */ }
 async function send(hex){ log('key '+hex); try{ await fetch('/key',{method:'POST',body:hex}); }catch(e){ log('send failed: '+e); } }
-document.getElementById('sendraw').onclick=()=>send(document.getElementById('raw').value);
-document.getElementById('raw').addEventListener('keydown',e=>{ if(e.key==='Enter') send(e.target.value); e.stopPropagation(); });
 // physical keyboard -> wire codes
 const FK={F1:'F1',F2:'F2',F3:'F3',F4:'F4',F5:'F5',F6:'F6',F7:'F7',F8:'F8',F9:'PF1',F10:'PF2',F11:'PF3',F12:'PF4',Enter:'ENTER',Backspace:'BS',Tab:'FS',Escape:'INIT',ArrowUp:'CURSOR UP',ArrowDown:'CURSOR DOWN',ArrowLeft:'CURSOR LEFT',ArrowRight:'CURSORRIGHT',Home:'RET',PageUp:'YES',PageDown:'NO',Delete:'CLR 1'};
 const PHYS_SHIFT={'1':'LOAD EDL','2':'SAVE EDL','3':'MOD EDL','4':'CRCT','5':'INSRT','6':'DEL','7':'MOVE','8':'NOTE','9':'LAST EDIT','0':'RECALL'};
 const PHYS_CTRL={'3':'STOR ED','4':'APPEND','7':'COPY','0':'RECAL SCROL','e':'REC','t':'PREROLL','y':'BAK AUX','u':'1ST - ED','i':'PREREAD','q':'P-LEARN','w':'S QUICK PVW','a':'P7','s':'P8','d':'P9','f':'P10','g':'P11','h':'P12','k':'SY-TIME','z':'FREEZE-OFF','x':'FREEZE-ON','c':'STANDBY OFF','v':'MEM PLAY','b':'EJECT','n':'TRACK SCROL','m':'MRK SPD',',':'LAST MARK','.':'MULTI-SCRPD','/':'RECAL SEGMT','p':'CTL+CUT',' ':'CTL+ALLSTOP',Enter:'CTL+ENTER',ArrowUp:'CTL+UP',ArrowDown:'CTL+DOWN',ArrowLeft:'CTL+LEFT',ArrowRight:'CTL+RIGHT'};
 document.addEventListener('keydown',e=>{
-  if(!document.getElementById('physkb').checked) return;
   if(e.target.tagName==='INPUT') return;
   let code=null;
   if(e.ctrlKey && PHYS_CTRL[e.key]) code=WIRE[PHYS_CTRL[e.key]];
@@ -195,55 +186,139 @@ document.addEventListener('keydown',e=>{
 });
 
 // ---------------------------------------------------------------------------------------------
-// Screen rendering: 80 x 29 cells of [char, font bank, attribute]. attribute: bits 0-3 colour,
-// bit 14 blink, bit 15 reverse. Font bank 0: ASCII plus line-drawing codes >= 0x80; bank 7:
-// 0x80-0xBF double-width glyph (left half, ASCII = code-0x60), 0xC0-0xFF right half, <0x80 halftone.
+// Screen rendering: 80 x 29 cells of [char, CG bank, attribute]. Attribute bits 0-3 = colour index,
+// bit 14 blink, bit 15 reverse. Colours come from the palette the application loads into the DSC-63
+// (screen.pal: [r,g,b, reverse r,g,b] per index); before that the DIAG colour order is used.
+// CG banks (identified from MDISP code and photos of real screens, see docs/hardware.md):
+//   0 ASCII; 0x80-0xDF frame/line graphics; 0xE0-0xFF small capitals embedded in a frame line
+//   1 alternative ASCII (copyright line)        2 small font (SRC, B, F-key numbers)
+//   3 timeline graphics (bars, markers)         4 small font variant
+//   5 inverse ASCII (lit cell, dark glyph): panels, F-key label strip (0x9A divider, 0x9B left edge)
+//   6 inverse double-width font                 7 double-width font (0x80-0xBF left half, +0x40 right
+//     half, ASCII = code-0x60); codes < 0x80 = halftone tiles        8 rounded frame corners
 // ---------------------------------------------------------------------------------------------
 const CW=12, CH=20, cv=document.getElementById('screen'), ctx=cv.getContext('2d');
-const PAL=['#8c8c8c','#2244ee','#22cc33','#22cccc','#ee3322','#dd33dd','#eedd22','#eeeeee','#226622','#6688aa','#ee6633','#ffbbcc','#88aa44','#88ccff','#ffff44','#ffffff'];
-// line-drawing glyphs: segments l,r,u,d (centre) ; d = dotted horizontal, D = double/thick
-const LINES={0x82:'lr', 0x86:'lr', 0x89:'ud', 0x90:'ud', 0xd6:'rd', 0xd7:'ld', 0xd8:'ru', 0xd9:'lu', 0xd3:'lrd', 0xd2:'lru', 0xd4:'udr', 0xd5:'udl', 0xd1:'lrud',
-  0x80:'lr',0x81:'lr',0x83:'lr',0x84:'lr',0x85:'lr',0x87:'lr',0x88:'ud',0x8a:'ud',0x8b:'ud'};
-function drawLine(x,y,segs){
-  ctx.beginPath(); const cx=x+CW/2, cy=y+CH/2;
-  if(segs.includes('l')) {ctx.moveTo(x,cy); ctx.lineTo(cx,cy);} if(segs.includes('r')) {ctx.moveTo(cx,cy); ctx.lineTo(x+CW,cy);}
-  if(segs.includes('u')) {ctx.moveTo(cx,y); ctx.lineTo(cx,cy);} if(segs.includes('d')) {ctx.moveTo(cx,cy); ctx.lineTo(cx,y+CH);}
+// DIAG order: BLACK RED GREEN YELLOW BLUE MAGENTA CYAN WHITE, DARK GREEN, ASH BLUE, VERMILION, PALE PINK,
+// MOSS GREEN, LIGHT BLUE, BRIGHT YELLOW, GRAY
+const DEFPAL=['#ffffff','#ff2020','#20e020','#e0e020','#2040ff','#e020e0','#20e0e0','#e6e6e6','#003311','#4477aa','#ee5522','#ffbbcc','#557722','#88ccff','#ffff55','#777777'];
+const FONT='"Menlo","DejaVu Sans Mono","Consolas",monospace';
+function rgb(a){ return `rgb(${a[0]},${a[1]},${a[2]})`; }
+// bank 0 frame glyphs: h = horizontal line through the middle, v = vertical; partial lines for label gaps
+const FRAME={0x82:'h',0x86:'h',0x80:'h',0x81:'h',0x83:'h',0x84:'h',0x85:'h',0x87:'h',0x89:'v',0x90:'v',0x88:'v',0x8a:'v',0x8b:'v',
+  0xd2:'hl',0xd3:'hr',0xd6:'rd',0xd7:'ld',0xd8:'ru',0xd9:'lu',0xd1:'lrud',0xd4:'udr',0xd5:'udl'};
+// bank 2 0x00-0x1F: frame pieces of pop-up windows (0x00-0x07) and the selection cursor box (0x16-0x1D)
+const BOX2={0x00:'rd',0x01:'ld',0x02:'ru',0x03:'lu',0x04:'h',0x05:'h',0x06:'v',0x07:'v',
+  0x18:'rd',0x19:'ld',0x1a:'ru',0x1b:'lu',0x1c:'h',0x1d:'h',0x16:'v',0x17:'v'};
+function seg(x,y,spec){
+  const cx=x+CW/2, cy=y+CH/2; ctx.beginPath();
+  if(spec==='h'){ctx.moveTo(x,cy);ctx.lineTo(x+CW,cy);}
+  else if(spec==='v'){ctx.moveTo(cx,y);ctx.lineTo(cx,y+CH);}
+  else if(spec==='hl'){ctx.moveTo(x,cy);ctx.lineTo(x+CW-3,cy);}
+  else if(spec==='hr'){ctx.moveTo(x+3,cy);ctx.lineTo(x+CW,cy);}
+  else { if(spec.includes('l')){ctx.moveTo(x,cy);ctx.lineTo(cx,cy);} if(spec.includes('r')){ctx.moveTo(cx,cy);ctx.lineTo(x+CW,cy);}
+         if(spec.includes('u')){ctx.moveTo(cx,y);ctx.lineTo(cx,cy);} if(spec.includes('d')){ctx.moveTo(cx,cy);ctx.lineTo(cx,y+CH);} }
   ctx.stroke();
 }
+function corner(x,y,k){ // rounded frame corners (bank 8)
+  const cx=x+CW/2, cy=y+CH/2, r=5; ctx.beginPath();
+  if(k===0xd6){ctx.moveTo(cx,y+CH);ctx.arcTo(cx,cy,x+CW,cy,r);ctx.lineTo(x+CW,cy);}
+  else if(k===0xd7){ctx.moveTo(x,cy);ctx.arcTo(cx,cy,cx,y+CH,r);ctx.lineTo(cx,y+CH);}
+  else if(k===0xd8){ctx.moveTo(cx,y);ctx.arcTo(cx,cy,x+CW,cy,r);ctx.lineTo(x+CW,cy);}
+  else if(k===0xd9){ctx.moveTo(x,cy);ctx.arcTo(cx,cy,cx,y,r);ctx.lineTo(cx,y);}
+  else return false; ctx.stroke(); return true;
+}
+function text(ch,x,y,size,style){ ctx.font=`${style||''} ${size}px ${FONT}`; ctx.fillText(ch,x+1,y+CH/2+1); }
+function timeline(ch,x,y){ // bank 3
+  const t=y+4, bt=y+CH-4, cy=y+CH/2;
+  switch(ch){
+    case 0x80: ctx.beginPath();ctx.moveTo(x+2,y+CH);ctx.lineTo(x+2,t);ctx.lineTo(x+CW,t);ctx.stroke(); return true; // hollow bar, top-left
+    case 0x81: ctx.beginPath();ctx.moveTo(x,t);ctx.lineTo(x+CW,t);ctx.stroke(); return true;
+    case 0x82: ctx.beginPath();ctx.moveTo(x,t);ctx.lineTo(x+CW-2,t);ctx.lineTo(x+CW-2,y+CH);ctx.stroke(); return true;
+    case 0x83: ctx.beginPath();ctx.moveTo(x+2,y);ctx.lineTo(x+2,bt);ctx.lineTo(x+CW,bt);ctx.stroke(); return true;
+    case 0x84: ctx.beginPath();ctx.moveTo(x,bt);ctx.lineTo(x+CW,bt);ctx.stroke(); return true;
+    case 0x85: ctx.beginPath();ctx.moveTo(x,bt);ctx.lineTo(x+CW-2,bt);ctx.lineTo(x+CW-2,y);ctx.stroke(); return true;
+    case 0x8c: ctx.fillRect(x+2,y+5,CW-2,CH-10); return true;          // solid bar left end
+    case 0x8d: ctx.fillRect(x,y+5,CW,CH-10); return true;              // solid bar
+    case 0x8e: ctx.fillRect(x,y+5,CW-2,CH-10); return true;            // solid bar right end
+    case 0x93: ctx.fillRect(x+2,y+5,CW-2,CH-10); return true;          // transition bar left end
+    case 0xdd: case 0xde: ctx.beginPath();ctx.moveTo(x+2,y+3);ctx.lineTo(x+CW-2,y+3);ctx.lineTo(x+CW/2,y+11);ctx.closePath();ctx.fill(); return true; // edit-point marker
+  }
+  if(ch>=0xa2 && ch<=0xb0){
+    // transition pieces drawn as an outlined bar with a thin diagonal (as on the BVE-2000 screen):
+    // 0xA2..0xA8 rising diagonal (incoming source), 0xAA..0xAF falling diagonal (outgoing source),
+    // 0xA9 bar at full height, 0xB0 bar collapsed to its base line
+    const H=CH-10, base=y+5+H, L=k=>base-H*k/7; ctx.lineWidth=1.5; ctx.beginPath();
+    // 0xA2 / 0xB0: flat base line; 0xA3..0xA8 rise one sixth each; 0xAA..0xAF fall one sixth each
+    const R=k=>base-H*k/6;
+    if(ch===0xa2){ ctx.moveTo(x,base); ctx.lineTo(x+CW,base); }
+    else if(ch<0xa9){ const k=ch-0xa3; ctx.moveTo(x,R(k)); ctx.lineTo(x+CW,R(k+1)); ctx.moveTo(x,base); ctx.lineTo(x+CW,base); }
+    else if(ch===0xa9){ ctx.moveTo(x,R(6)); ctx.lineTo(x+CW,R(6)); ctx.moveTo(x,base); ctx.lineTo(x+CW,base); }
+    else if(ch<0xb0){ const k=0xb0-ch; ctx.moveTo(x,R(k)); ctx.lineTo(x+CW,R(k-1)); ctx.moveTo(x,R(6)); ctx.lineTo(x+CW,R(6)); }
+    else { ctx.moveTo(x,base); ctx.lineTo(x+CW,base); }
+    ctx.stroke(); ctx.lineWidth=2; return true; }
+  if(ch===0x94||ch===0x9b){ // outlined bar body / right end
+    const t=y+5, bt=y+CH-5; ctx.lineWidth=1.5; ctx.beginPath(); ctx.moveTo(x,t); ctx.lineTo(x+CW-(ch===0x9b?2:0),t);
+    ctx.moveTo(x,bt); ctx.lineTo(x+CW-(ch===0x9b?2:0),bt); if(ch===0x9b){ ctx.moveTo(x+CW-2,t); ctx.lineTo(x+CW-2,bt); }
+    ctx.stroke(); ctx.lineWidth=2; return true; }
+  if(ch>=0x80){ ctx.fillRect(x,y+5,CW,CH-10); return true; }            // other bar pieces
+  return false;
+}
 let blinkPhase=0;
+// The DSC-63 drives a CRT from 6-bit DACs; an extra gamma step keeps near-black palette entries
+// (e.g. the dark-green screen background, 0x000C04) looking black as on the real monitor.
+function crt(p){ return `rgb(${p.slice(0,3).map(v=>Math.round(255*Math.pow(v/255,1.6))).join(',')})`; }
+// Draw one cell glyph. Returns the number of cells consumed (2 for double-width glyphs).
+function glyph(ch,font,x,y,fg,bg){
+  ctx.fillStyle=fg; ctx.strokeStyle=fg;
+  if(font===7||font===6){
+    if(ch>=0x80 && ch<0xc0){
+      if(font===6){ ctx.fillStyle=bg; ctx.fillRect(x+CW,y,CW,CH); ctx.fillStyle=fg; }
+      ctx.font=`bold 22px ${FONT}`; ctx.save(); ctx.scale(1.55,1); ctx.fillText(String.fromCharCode(ch-0x60), x/1.55+2, y+CH/2+1); ctx.restore(); return 2; }
+    if(ch>=0xc0) return 1;
+    if(font===7 && ch>0x20){ for(let yy=2;yy<CH;yy+=4) for(let xx=(yy/4%2)*2;xx<CW;xx+=4) ctx.fillRect(x+xx,y+yy,2,2); }
+    else if(ch>0x20) text(String.fromCharCode(ch),x,y,15);
+    return 1;
+  }
+  if(font===8 && corner(x,y,ch)) return 1;
+  if(font===2 && ch<0x20){ const f=BOX2[ch]; if(f) seg(x,y,f); return 1; }   // pop-up frames
+  if(font===4){ // highlighted small text (inverse)
+    ctx.fillRect(x,y+2,CW,CH-4); ctx.fillStyle=bg;
+    if(ch>0x20 && ch<0x7f) text(String.fromCharCode(ch),x,y,12); return 1; }
+  if(font===3 && timeline(ch,x,y)) return 1;
+  if(font===5 && ch>=0x80){ // F-key strip edges: 0x9A divider between labels, 0x9B left edge
+    if(ch===0x9a) ctx.fillRect(x,y,2,CH); else if(ch===0x9b) ctx.fillRect(x,y,3,CH); return 1; }
+  if(ch>0x20 && ch<0x7f){ text(String.fromCharCode(ch),x,y,(font===2||font===4)?12:15); return 1; }
+  if(font===0 && ch>=0xe0){ text(String.fromCharCode(ch-0xa0),x,y,11); return 1; } // small caps in frame lines
+  if(ch>=0x80){ const f=FRAME[ch]; if(f) seg(x,y,f); else if(ch===0xc0){ seg(x,y,'v'); text('*',x,y,15); } else ctx.fillRect(x+4,y+8,4,4); }
+  return 1;
+}
 function render(scr){
+  const pal=scr.pal ? scr.pal.map(crt) : DEFPAL;
+  const ovpal=(scr.ovpal||[]).map(crt);
   ctx.fillStyle='#000'; ctx.fillRect(0,0,cv.width,cv.height);
   ctx.textBaseline='middle'; ctx.lineWidth=2;
+  // main plane: attr bits 0-3 foreground, 8-11 background (main palette), 14 blink, 15 reverse
   for(let r=0;r<29;r++){ const row=scr.rows[r]; let c=0;
-    while(c<80){ const [ch,font,attr]=row[c]; const x=c*CW, y=r*CH; const col=PAL[attr&15]||'#fff'; const rev=attr&0x8000, blink=attr&0x4000;
-      let fg=col, bg='#000'; if(rev){fg='#000'; bg=col;} if(blink && blinkPhase){fg=bg;}
-      if(rev && (attr&15)===0) bg='#8c8c8c';
-      if(bg!=='#000'){ ctx.fillStyle=bg; ctx.fillRect(x,y,CW,CH); }
-      ctx.fillStyle=fg; ctx.strokeStyle=fg;
-      if(font===7){
-        if(ch>=0x80 && ch<0xc0){ ctx.font='bold 22px "Menlo","DejaVu Sans Mono",monospace'; ctx.save(); ctx.scale(1.55,1); ctx.fillText(String.fromCharCode(ch-0x60), x/1.55+2, y+CH/2+1); ctx.restore(); c+=2; continue; }
-        if(ch>=0xc0){ c++; continue; }
-        // halftone / logo tile
-        ctx.fillStyle=fg; for(let yy=2;yy<CH;yy+=4) for(let xx=(yy/4%2)*2;xx<CW;xx+=4) ctx.fillRect(x+xx,y+yy,2,2); c++; continue;
-      }
-      if(font!==0){ // other CG banks (5 = small/status font, 8 = frame variants): show printable codes as text, others as a box
-        if(ch>=0x20 && ch<0x7f){ ctx.font='italic 13px "Menlo","DejaVu Sans Mono",monospace'; ctx.fillText(String.fromCharCode(ch), x+1, y+CH/2+1); }
-        else if(ch>=0x80 && LINES[ch]) drawLine(x,y,LINES[ch]);
-        else { ctx.fillStyle='#555'; ctx.fillRect(x+2,y+3,CW-4,CH-6); ctx.fillStyle=fg; ctx.font='9px monospace'; ctx.fillText(ch.toString(16),x+1,y+CH/2); }
-        c++; continue; }
-      if(ch>=0x20 && ch<0x7f){ ctx.font='15px "Menlo","DejaVu Sans Mono","Consolas",monospace'; ctx.fillText(String.fromCharCode(ch), x+1, y+CH/2+1); }
-      else if(ch>=0x80){ const segs=LINES[ch]; if(segs) drawLine(x,y,segs); else { ctx.fillRect(x+4,y+8,4,4); } }
-      c++;
+    while(c<80){ const [ch,font,attr]=row[c]; const x=c*CW, y=r*CH;
+      let fg=pal[attr&15]||'#fff', bg=scr.pal ? pal[(attr>>8)&15] : '#000';
+      if(attr&0x8000){ const t=fg; fg=bg; bg=t; }
+      if((attr&0x4000) && blinkPhase) fg=bg;
+      if(font===5||font===6){ const t=fg; fg=bg; bg=t; }   // inverse fonts
+      ctx.fillStyle=bg; ctx.fillRect(x,y,CW,CH);
+      c+=glyph(ch,font,x,y,fg,bg);
     }
+  }
+  // overlay plane (pop-up windows, swatches, selection bars): [row, col, char, bank, colours];
+  // colours bits 0-3 foreground, 4-7 background (overlay palette, 0 = transparent)
+  for(const [r,c,ch,font,a] of (scr.ov||[])){
+    const x=c*CW, y=r*CH, bgi=(a>>4)&15; const fg=ovpal[a&15]||'#fff';
+    let bg=bgi ? ovpal[bgi] : null;
+    if(bg){ ctx.fillStyle=bg; ctx.fillRect(x,y,CW,CH); }
+    if(ch!==0x20 || font) glyph(ch,font,x,y,fg,bg||'#000');
   }
 }
 async function tick(){
-  try{ const [s,st]=await Promise.all([fetch('/screen').then(r=>r.json()), fetch('/status').then(r=>r.json())]);
-       render(s);
-       const booting=!st.realtime;
-       document.getElementById('status').textContent=`t=${st.seconds.toFixed(1)}s emulated ${booting?'— BOOTING (fast forward), keys are ignored until the edit page is up':'(real time)'}  LEDs=${st.leds.toString(16)}`;
-       document.getElementById('status').style.color=booting?'#fc6':'#9f9'; }
-  catch(e){ document.getElementById('status').textContent='emulator not reachable: '+e; }
+  try{ render(await fetch('/screen').then(r=>r.json())); }catch(e){}
 }
 setInterval(tick,100); setInterval(()=>{blinkPhase^=1;},500); tick();
 </script>
