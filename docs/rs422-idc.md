@@ -158,8 +158,40 @@ by those keys); MANCNT only uses the counter when the mode matches. The emulator
 With a SW'ER IDC on the port chosen as switcher, slot 1 polls the switcher every 3 fields: `64 80` for
 type words with bit 0x40 clear, `6C 80 00 83` with it set. Both are answered by
 `7C 80 00 flags status(2) [bit0: 4 bytes] [bit1: 2 bytes] [bit7: 2 bytes]`; status 0 = no fault. At
-start-up the editor also sends `42 00 00` and `24 1F 00 FF 00 FF 00 FF`. SWMEM only records a switcher
-memory number in the edit; the recall is sent when an edit is previewed or executed (not yet captured).
+start-up the editor also sends `42 00 00`, `4F 44 0F FF`, `24 1F 00 FF 00 FF 00 FF` and `21 40 00 02 00 FF FF`.
+Every other switcher command is answered with its command byte + 0x10.
+
+Switcher commands (data after the `type len` header):
+
+| Command | Meaning |
+|---|---|
+| `21 40 00 02 00 FF xx` | Live crosspoint: put source `xx` on program now (source keys with MONITOR SELECT = PGM; `FF` = none) |
+| `41 00 00 02 07` | Clear the event list of the next preview / edit |
+| `41 40 FL 02 <frame:4> t FF A FF B FF` | Crosspoint event at timeline frame: `t` 0 = cut to `A`; 4 = mix, 8 = wipe, `A` on program, `B` on preset |
+| `41 50 FL 02 <frame:4> 04 <rate:2>` | Start the transition at timeline frame, rate in fields |
+| `41 60 FL 02 <frame:4> hi lo FF FF` | Wipe pattern |
+| `40 00 <frame:4>` | Start the timeline at this frame (the same start the VTRs get) |
+| `24 10 00 03 00 01 00 01` / `24 18 ...` | At the roll / at the end of the preview or edit |
+
+Crosspoint numbers are the editor's XPT ASSIGN values (INIT > ASSIGN, VIDEO EFF); the defaults are R = 1, P1 = 2,
+P2 = 3, P3 = 4. AX1, AX2 and BLK, on the assignment's second page, start unassigned and are then sent as `FF`. The
+emulator sets them to 8, 9 and 10 at boot while they are unassigned. They are kept in the battery SRAM as 5-byte
+records (video EFF, video MON, audio EFF, audio MON, -) for P1-P12, AX1, AX2, BLK and EFF, AX1's at 0x00806156,
+with `FF` = unassigned and no checksum. A DISS from
+P1 to R at the in point gives `41 40` (cut to 2) and `41 40` with `t` = 4, `A` = 2, `B` = 1 plus `41 50` with the
+rate, all at the in-point frame. SWMEM's SET EFF only stores a switcher memory number in the edit; the recall
+message for it has not been seen yet.
+
+#### SWMEM and the switcher library
+
+SWMEM (SHIFT + MOD EVENT) does not depend on what the switcher answers. The editor drives each switcher model
+through a "switcher dialogue" library at `0xC4000000` (data at `0xD4000000`), and the disks only carry SWDLG2,
+a stub whose descriptor is all zero, so SWMEM answers UNSUPPORTED FUNCTION. The manual's switcher list (GVG
+100/200/300/1680, Kadenza, A84, HDS-1000, Sony BVS-3000 series) names libraries that are not on the disks. The
+emulator fills the descriptor in after boot for a Sony BVS-3000-style switcher: bank ME1, E-FILE registers 0-99,
+F1-F8 labels on (`hle_switcher_profile()` in `src/machine.cpp` lists the fields). It also sets the SWER LOCAL
+modes PREVIEW MODE = PGM and MONITOR SELECT = PGM (RAM only; this edition's SETUP has no switcher group), without
+which the editor sends the switcher nothing. `--no-swmem` leaves the stub alone.
 
 ## Emulator
 
@@ -170,5 +202,7 @@ boot with devices, assign them once: INIT, F3 (ASSIGN), F7, F4 (DFLT ALL), YES. 
 P1-P3 = B-D and is kept in SRAM.
 
 HTTP: `GET /devices` returns each device's state. `POST /devices/<port>` with a body of `play`, `stop`,
-`ff`, `rew`, `still`, `rec`, `eject`, `load`, `goto <frame>` (VTR) or `pgm N`, `pst N`, `cut` (switcher)
-drives a device from outside the editor. This is the hook for connecting players or OBS later.
+`ff`, `rew`, `still`, `rec`, `eject`, `load`, `goto <frame>` (VTR) or `pgm N`, `pst N`, `cut`, `auto [frames]`,
+`trans cut|mix|wipe`, `rate N` (switcher) drives a device from outside the editor. The virtual switcher runs the
+event list on its timeline and counts every take (`take.n` in `/devices`, with type, from, to and length);
+`obs/bve9100_obs.py` follows it, see `docs/obs.md`.

@@ -40,11 +40,14 @@ struct MachineConfig {
     std::string vram_dump;               // write DSC-63 VRAM here at exit
     struct KeyEvent { uint64_t cycle; std::vector<uint8_t> bytes; int dial = 0; };
     std::vector<KeyEvent> key_events;    // scripted keyboard bytes delivered at a cycle
+    struct PokeEvent { uint64_t cycle; uint32_t addr; std::vector<uint8_t> bytes; bool done = false; };
+    std::vector<PokeEvent> pokes;        // debug: bytes written to physical memory at a cycle (--poke)
     bool tty = false;                    // interactive terminal front-end
     bool realtime = false;               // pace emulation to wall-clock time (20 MHz)
     bool no_if508 = false;               // omit the IF-508 network board
     int kbd_type = 0x43;                 // byte answered to the keyboard 'R','Z' request
     bool keyassign_default = true;       // HLE: load the application's default key assignment table (as the INIT menu would)
+    bool swmem = true;                   // HLE: describe the virtual switcher to the editor's switcher library (SWMEM, PVW / MON SEL)
     bool idle_skip = true;               // tick the devices straight to the next interrupt while the kernel idles (--no-idle-skip)
     std::string keymap;
     int http_port = 0;                   // browser front-end (0 = off)
@@ -57,6 +60,8 @@ struct MachineConfig {
     struct DeviceSpec { int port; std::string kind; uint16_t type; };   // port 0 = 'A' = slot 0 channel 0
     std::vector<DeviceSpec> devices;     // virtual devices on RS-422 ports (default: VTRs on A-D, switcher on E)
     bool no_devices = false;
+    std::string gpi_udp = "127.0.0.1:49100";   // GPI outputs as "gpi N" UDP datagrams (the MAXINE! emulator); "" = off
+    int gpi_base = 1;                    // GPI port 0 is sent as input gpi_base (MAXINE inputs are 1-8)
 };
 
 class Machine {
@@ -91,9 +96,16 @@ public:
     void place_module(const AbsModule& m);
     std::string symbolize(uint32_t addr) const;
     std::string current_task();
-    bool keyassign_done_ = false;
+    bool keyassign_done_ = false, swmem_done_ = false;
+    // GPI outputs (the four standard ports on the SPF board): state, pulses fired, and the UDP target
+    bool gpi_on_[4] = {false, false, false, false};
+    unsigned gpi_count_[4] = {0, 0, 0, 0};
+    void gpi_out(int port, bool on);
+    int gpi_sock_ = -1;
     Httpd httpd_;
     void hle_keyassign_default();
+    void hle_switcher_profile();
+    void hle_xpt_defaults();
     bool cpu_idle();                     // the CPU sits in the kernel's idle loop with no interrupt to take
     bool idle_loop_at(uint32_t a);
     uint32_t idle_lo_ = 0;               // start of the idle loop once found

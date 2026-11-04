@@ -4,6 +4,9 @@
   "private": true,
   "description": "Sony BVE-9100 emulator: native build with CMake, web build with Emscripten",
   "scripts": {
+    "build:desktop": "cmake -B build && cmake --build build -j",
+    "start:desktop": "npm run build:desktop && ./run_ui.sh",
+    "start": "npm run start:desktop",
     "snapshot:web": "node scripts/snapshot-defaults.mjs",
     "build:web": "node scripts/build-web.mjs",
     "deploy:web": "npm run build:web && npx wrangler pages deploy dist-web --project-name bve9100-emulator --branch main",

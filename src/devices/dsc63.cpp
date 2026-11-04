@@ -87,7 +87,7 @@ std::vector<std::string> Dsc63::render_text() const {
             const uint8_t* cell = &vram_[a];
             if (a + 3 < plane2_.size()) { const uint8_t* p = &plane2_[a]; if (p[1] != 0x20 && (p[0] | p[1])) cell = p; }
             uint8_t ch = cell[1], font = cell[0] & 0x0F;
-            if (font == 0) line.push_back((ch >= 0x20 && ch < 0x7F) ? (char)ch : (ch == 0 ? ' ' : '.'));
+            if (font == 0) line.push_back((ch >= 0x20 && ch < 0x7F) ? (char)ch : ch == 0 ? ' ' : ch == 0xC0 ? '*' : '.');   // 0xC0: frame line with the selected-deck star
             else if ((font == 2 || font == 6) && ch >= 0x80) line.push_back(ch < 0xC0 ? (char)(ch - 0x60) : ' ');   // double-width serif: left half, right half
             else if (ch >= 0xC0) line.push_back(' ');
             else line.push_back(font == 7 ? '%' : '#');
@@ -119,7 +119,7 @@ void Dsc63::dump_screen(FILE* out, bool color) const {
             }
             // CG bank 7: 0x00-0x7F halftone/graphics tiles, 0x80-0xBF left half of a double-width ASCII glyph
             // (code - 0x80 + 0x20), 0xC0-0xFF its right half. Other banks: unknown, shown as '#'.
-            if (font == 0) fputc((ch >= 0x20 && ch < 0x7F) ? ch : (ch == 0 ? ' ' : '.'), out);
+            if (font == 0) fputc((ch >= 0x20 && ch < 0x7F) ? ch : ch == 0 ? ' ' : ch == 0xC0 ? '*' : '.', out);   // 0xC0: frame line with the selected-deck star
             else if (ch >= 0x80 && ch < 0xC0) fputc(ch - 0x80 + 0x20, out);
             else if (ch >= 0xC0) fputc(' ', out);
             else fputc(font == 7 ? '%' : '#', out);

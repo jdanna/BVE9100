@@ -12,6 +12,27 @@
   #top { flex:none; display:flex; align-items:center; gap:14px; padding:8px 14px; background:#111; font-size:13px; }
   #top b { color:#fff; letter-spacing:1px; }
   #top input { width:140px; background:#222; color:#eee; border:1px solid #555; padding:3px 6px; font-family:monospace; }
+  #fkmode { display:flex; align-items:center; gap:7px; cursor:pointer; color:#aaa; }
+  #fkmode input { display:none; }
+  #fkmode i { position:relative; width:30px; height:16px; border-radius:8px; background:#444; border:1px solid #666; }
+  #fkmode i::after { content:""; position:absolute; top:2px; left:2px; width:12px; height:12px; border-radius:50%; background:#ccc; transition:left .12s; }
+  #fkmode input:checked + i { background:#3d6fa8; }
+  #fkmode input:checked + i::after { left:16px; }
+  #obstape { display:flex; align-items:center; gap:8px; padding:2px 8px; border:1px solid #333; border-radius:4px; background:#181818; }
+  #obstape[hidden] { display:none; }
+  #obstape .lamp { width:10px; height:10px; border-radius:50%; background:#3a1512; box-shadow:inset 0 0 2px #000; }
+  #obstape .lamp.armed { background:#6b2620; }
+  #obstape .lamp.rec { background:#ff3b2f; box-shadow:0 0 6px #ff3b2f; }
+  #obstape .name { color:#bbb; letter-spacing:1px; font-size:11px; }
+  #obstape .info { color:#9ab; font-family:monospace; font-size:12px; cursor:default; white-space:nowrap; }
+  #obstape .msg { color:#aaa; font-size:12px; max-width:260px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #obstape .msg.err { color:#f88; }
+  #obstape label { display:flex; align-items:center; gap:5px; color:#aaa; cursor:pointer; }
+  #obstape button { padding:2px 8px !important; font-size:12px; }
+  #gpibox { display:flex; align-items:center; gap:5px; padding:2px 8px; border:1px solid #333; border-radius:4px; background:#181818; color:#bbb; font-size:11px; letter-spacing:1px; cursor:default; }
+  #gpibox[hidden] { display:none; }
+  #gpibox i { width:9px; height:9px; border-radius:50%; background:#3a3012; box-shadow:inset 0 0 2px #000; font-style:normal; }
+  #gpibox i.on { background:#ffc83a; box-shadow:0 0 6px #ffc83a; }
   #top button { background:#333; color:#eee; border:1px solid #666; padding:3px 10px; cursor:pointer; }
   #screenwrap { flex:1 1 auto; min-height:0; display:flex; justify-content:center; align-items:center; padding:10px; background:#000; }
   canvas#screen { display:block; border:6px solid #2a2a2a; border-radius:6px; }
@@ -72,7 +93,7 @@
 </style>
 </head>
 <body>
-<div id="top"><b>BVE-9100</b><span style="flex:1"></span><button id="palbtn" title="Edit the editor's colour palette and inject it into SRAM">Palette</button></div>
+<div id="top"><b>BVE-9100</b><div id="obstape" hidden title="Record tape in OBS Studio (obs/bve9100_obs.py): each edit the editor records is recorded by OBS as a segment of the record tape; Export conforms them into one file"><span class="lamp" id="otlamp"></span><span class="name">OBS TAPE</span><label title="Record the editor's edits in OBS"><input type="checkbox" id="otarm">Record edits</label><span class="info" id="otinfo">empty</span><button id="otundo" title="Remove the last segment from the tape (the OBS recording is kept)">Undo</button><button id="otclear" title="Empty the tape (the OBS recordings are kept)">Clear</button><button id="otexport" title="Conform the tape into one file with ffmpeg">Export</button><span class="msg" id="otmsg"></span></div><div id="gpibox" hidden title="GPI outputs 0-3 (SETUP GPI events, GPI mode TEST FIRE). Each pulse is also sent to the MAXINE! emulator (--gpi-udp)."><span>GPI</span><i></i><i></i><i></i><i></i></div><span style="flex:1"></span><label id="fkmode" title="What your computer's F1-F10 keys do: the BKE-9400A F1-F8 keys (F9-F12 = PF1-PF4), or the source keys R, P1-P6, AUX1, AUX2, BLACK (Esc = R, F1-F6 = P1-P6, F7/F8 = AUX1/AUX2, F9 = BLACK; Shift gives the F keys and INIT). Shift+Space switches."><span>F keys</span><input type="checkbox" id="fksrc"><i></i><span>Source</span></label><button id="palbtn" title="Edit the editor's colour palette and inject it into SRAM">Palette</button></div>
 <div id="palpanel" hidden>
   <h3><span>VDU COLOUR PALETTE</span><button id="palclose" title="Close">✕</button></h3>
   <select id="palpreset"></select>
@@ -203,8 +224,9 @@ function updateLamps(l){
 }
 // Search LED strip above the dial: follows the keyboard's dial counter. SHTL: a bar from the centre LED
 // towards the side the dial is turned, longer the further it is turned (SHTL_FULL counts = whole half),
-// with the REVERSE / FORWARD lamp for the direction. JOG / DMC: a dot that walks with the dial and the
-// direction lamp of the last movement. Dial off: dark.
+// with the REVERSE / FORWARD lamp for the direction. JOG: the centre LED, moved one step left or right while
+// the dial turns, with the direction lamp. DMC: a dot that walks with the dial and the direction lamp of the
+// last movement. Dial off: dark.
 const NLED=15, MID=7, SHTL_FULL=60;
 const ledEls=[]; { const box=document.getElementById('searchleds'); for(let i=0;i<NLED;i++){ const e=document.createElement('i'); box.appendChild(e); ledEls.push(e); } }
 let lastCount=null, lastDir=0, lastMove=0;
@@ -215,7 +237,10 @@ function searchLeds(l){
   if(l.dial===0){
     const n=Math.min(MID, Math.ceil(Math.abs(c)*MID/SHTL_FULL)); dir=Math.sign(c);
     on[MID]=true; for(let i=1;i<=n;i++) on[MID+dir*i]=true;
-  } else if(l.dial===1 || l.dial===2){
+  } else if(l.dial===1){
+    if(now-lastMove<400) dir=lastDir;
+    on[MID+dir]=true;
+  } else if(l.dial===2){
     on[((MID+c)%NLED+NLED)%NLED]=true; if(now-lastMove<400) dir=lastDir;
   }
   ledEls.forEach((e,i)=>e.classList.toggle('on',on[i]));
@@ -224,6 +249,7 @@ function searchLeds(l){
 }
 let shift=false, ctrl=false;
 const KEYEL={};   // wire code -> on-screen key that sends it (first one wins: main block before the numeric pad)
+const KEYDEF={};  // plain wire code -> key definition (for the CTRL legend of a physical key)
 function mk(k){
   const d=document.createElement('div');
   d.className='key '+(k.c||'')+' '+(k.w||'')+' '+(k.cls||'');
@@ -243,6 +269,7 @@ function mk(k){
   };
   d.dataset.mod=k.mod||'';
   for(const fn of [k.fn,k.shift,k.ctrl]){ const c=fn&&WIRE[fn]; if(c && !KEYEL[c]) KEYEL[c]=d; }
+  { const c=k.fn&&WIRE[k.fn]; if(c && !KEYDEF[c]) KEYDEF[c]=k; }
   return d;
 }
 function refreshMods(){ document.querySelectorAll('.key').forEach(e=>{ if(e.dataset.mod==='shift') e.classList.toggle('held',shift); if(e.dataset.mod==='ctrl') e.classList.toggle('held',ctrl);}); }
@@ -272,25 +299,68 @@ const DIAL_COUNTS=120;
 function log(s){ /* key traffic is not shown in the UI */ }
 async function send(hex){ log('key '+hex); try{ await fetch('/key',{method:'POST',body:hex}); }catch(e){ log('send failed: '+e); } }
 // physical keyboard -> wire codes
-const FK={F1:'F1',F2:'F2',F3:'F3',F4:'F4',F5:'F5',F6:'F6',F7:'F7',F8:'F8',F9:'PF1',F10:'PF2',F11:'PF3',F12:'PF4',Enter:'ENTER',Backspace:'RET',Tab:'FS',Escape:'INIT',ArrowUp:'CURSOR UP',ArrowDown:'CURSOR DOWN',ArrowLeft:'CURSOR LEFT',ArrowRight:'CURSORRIGHT',Home:'RET',PageUp:'YES',PageDown:'YES',Delete:'NO'};
-// Shift+F1..F10: the source select keys of the top row (R, P1-P6, AUX1, AUX2, BLACK)
-const SHIFT_FK={F1:'MONI-R',F2:'MONI-P1',F3:'MONI-P2',F4:'MONI-P3',F5:'MONI-P4',F6:'MONI-P5',F7:'MONI-P6',F8:'MONI-AUX1',F9:'MONI-AUX2',F10:'MONI-BLACK'};
-const PHYS_SHIFT={'1':'LOAD EDL','2':'SAVE EDL','3':'MOD EDL','4':'CRCT','5':'INSRT','6':'DEL','7':'MOVE','8':'NOTE','9':'LAST EDIT','0':'RECALL'};
-const PHYS_CTRL={'3':'STOR ED','4':'APPEND','7':'COPY','0':'RECAL SCROL','e':'REC','t':'PREROLL','y':'BAK AUX','u':'1ST - ED','i':'PREREAD','q':'P-LEARN','w':'S QUICK PVW','a':'P7','s':'P8','d':'P9','f':'P10','g':'P11','h':'P12','k':'SY-TIME','z':'FREEZE-OFF','x':'FREEZE-ON','c':'STANDBY OFF','v':'MEM PLAY','b':'EJECT','n':'TRACK SCROL','m':'MRK SPD',',':'LAST MARK','.':'MULTI-SCRPD','/':'RECAL SEGMT','p':'CTL+CUT',' ':'CTL+ALLSTOP',Enter:'CTL+ENTER',ArrowUp:'CTL+UP',ArrowDown:'CTL+DOWN',ArrowLeft:'CTL+LEFT',ArrowRight:'CTL+RIGHT'};
+const FK={F1:'F1',F2:'F2',F3:'F3',F4:'F4',F5:'F5',F6:'F6',F7:'F7',F8:'F8',F9:'PF1',F10:'PF2',F11:'PF3',F12:'PF4',Enter:'ENTER',Backspace:'RET',Tab:'PREVIEW',Escape:'INIT',ArrowUp:'CURSOR UP',ArrowDown:'CURSOR DOWN',ArrowLeft:'CURSOR LEFT',ArrowRight:'CURSORRIGHT',Home:'RET',PageUp:'YES',PageDown:'YES',Delete:'NO'};
+// Source layout: Esc = R, F1-F6 = P1-P6, F7/F8 = AUX1/AUX2, F9 = BLACK (the source select keys of the top row).
+// In Source mode these are the plain keys and Shift gives the F keys (and INIT on Esc); in F-key mode Shift gives the sources.
+const SRC_FK={Escape:'MONI-R',F1:'MONI-P1',F2:'MONI-P2',F3:'MONI-P3',F4:'MONI-P4',F5:'MONI-P5',F6:'MONI-P6',F7:'MONI-AUX1',F8:'MONI-AUX2',F9:'MONI-BLACK'};
+// printable keys that do not stand for the Sony key with the same code: p [ ] = CUT DISS WIPE, = is BS, ` is INIT, ' is KEY
+const PHYS={'[':'DISS',']':'WIPE','=':'BS','`':'INIT',"'":'KEY'};
+// the unshifted character of a physical key (US layout), so Shift and Ctrl can find the key it stands for
+const UNSHIFTED={Semicolon:';',Quote:"'",Comma:',',Period:'.',Slash:'/',Minus:'-',Equal:'=',BracketLeft:'[',BracketRight:']',Backslash:'\\',Backquote:'`',Space:' '};
+// F-key mode switch (remembered in this browser); Shift+Space flips it
+const fksrc=document.getElementById('fksrc');
+try{ fksrc.checked=localStorage.getItem('bve-fkeys')==='source'; }catch(e){}
+function saveFk(){ try{ localStorage.setItem('bve-fkeys',fksrc.checked?'source':'fkeys'); }catch(e){} }
+fksrc.addEventListener('change',()=>{ fksrc.blur(); saveFk(); });
+// the function a physical key stands for without modifiers
+function plainFn(e){
+  if(e.code==='NumpadDecimal') return '00';                       // numeric pad "." is the pad's 00 key (also with Num Lock off)
+  if(fksrc.checked && SRC_FK[e.key]) return SRC_FK[e.key];
+  if(FK[e.key]) return FK[e.key];
+  const ch=e.key.length===1 ? (UNSHIFTED[e.code] ?? e.key.toLowerCase()) : '';
+  if(PHYS[ch]) return PHYS[ch];
+  return null;
+}
+// wire code of the Sony key a physical key stands for, ignoring Shift and Ctrl
+function baseCode(e){
+  const fn=plainFn(e); if(fn) return WIRE[fn];
+  let ch=null;
+  if(e.code.startsWith('Key')) ch=e.code.slice(3).toLowerCase();
+  else if(/^Digit\d$/.test(e.code)) ch=e.code[5];
+  else if(UNSHIFTED[e.code]) ch=UNSHIFTED[e.code];
+  else if(e.key.length===1) ch=e.key;
+  const c=ch ? ch.charCodeAt(0) : 0;
+  return c>=0x20 && c<0x7f ? c.toString(16) : null;
+}
+// Holding the computer's Shift or Ctrl gives a key's SHIFT (top) or CTRL (bottom) legend, as the keyboard's own
+// SHIFT / CTRL keys do: the key the physical key stands for is looked up on the on-screen keyboard and the
+// function of that legend sent. A key without one sends its plain code (Shift: the typed character).
+function modCode(e, mod){
+  const plain=baseCode(e), k=plain && KEYDEF[plain];
+  if(k && k[mod]) return WIRE[k[mod]];
+  if(mod==='shift' && !plainFn(e) && e.key.length===1){ const c=e.key.charCodeAt(0); if(c>=0x20 && c<0x7f) return c.toString(16); }
+  return plain;
+}
 document.addEventListener('keydown',e=>{
   if(['INPUT','SELECT','TEXTAREA'].includes(e.target.tagName)) return;
   // A clicked button keeps the focus; the keyboard still belongs to the editor (and Space/Enter must not click it again)
   if(e.target.tagName==='BUTTON') e.target.blur();
+  if(e.key==='Control' || e.key==='Shift'){ physMods(e); return; }
+  if(e.code==='Space' && e.shiftKey && !e.ctrlKey){ e.preventDefault(); fksrc.checked=!fksrc.checked; saveFk(); return; }   // Shift+Space flips the F-key mode
   let code=null;
-  if(e.ctrlKey && PHYS_CTRL[e.key]) code=WIRE[PHYS_CTRL[e.key]];
-  else if(e.ctrlKey && PHYS_CTRL[e.key.toLowerCase()]) code=WIRE[PHYS_CTRL[e.key.toLowerCase()]];
-  else if(e.ctrlKey && /^F[1-8]$/.test(e.key)) code=WIRE['CTL+'+e.key];
-  else if(e.shiftKey && PHYS_SHIFT[e.key]) code=WIRE[PHYS_SHIFT[e.key]];
-  else if(e.shiftKey && SHIFT_FK[e.key]) code=WIRE[SHIFT_FK[e.key]];
-  else if(FK[e.key]) code=WIRE[FK[e.key]];
-  else if(e.key.length===1 && e.key.charCodeAt(0)>=0x20 && e.key.charCodeAt(0)<0x7f) code=e.key.charCodeAt(0).toString(16);
+  if(e.altKey || e.metaKey) return;
+  if(e.ctrlKey) code=modCode(e,'ctrl');
+  else if(e.shiftKey && SRC_FK[e.key]) code=WIRE[fksrc.checked ? FK[e.key] : SRC_FK[e.key]];   // the other layout of Esc / F1-F9
+  else if(e.shiftKey) code=modCode(e,'shift');
+  else code=baseCode(e);
   if(code){ e.preventDefault(); send(code); pressKey(code, e.code); }
 });
+// The on-screen SHIFT / CTRL keys show the computer's Shift / Ctrl while they are held
+function physMods(e){ document.querySelectorAll('.key').forEach(el=>{
+  if(el.dataset.mod==='ctrl') el.classList.toggle('held', ctrl || e.ctrlKey);
+  if(el.dataset.mod==='shift') el.classList.toggle('held', shift || e.shiftKey); }); }
+document.addEventListener('keyup',e=>{ if(e.key==='Control' || e.key==='Shift') physMods(e); });
+window.addEventListener('blur',()=>physMods({ctrlKey:false,shiftKey:false}));
 // Physical keys light the on-screen key they stand for while held
 const HELD={};
 function pressKey(code, phys){ const el=KEYEL[code]; if(!el) return; if(HELD[phys] && HELD[phys]!==el) HELD[phys].classList.remove('down');
@@ -318,6 +388,9 @@ const CW=12, CH=20, cv=document.getElementById('screen'), ctx=cv.getContext('2d'
 // Native screen size in cells * pixels; the canvas is scaled to fill the space above the keyboard and its
 // backing store follows the displayed size (times devicePixelRatio) so text stays sharp.
 const SW=960, SH=580;
+// overscan: a margin around the 80x29 cells, filled with the screen's background colour, so the text is not
+// right against the edge of the picture (in native pixels: OX left/right, OY top/bottom)
+const OX=10, OY=10;
 let lastScr=null, previewPal=null;   // previewPal: palette editor preview (6-bit RGB x 16) or null
 function layout(){
   // keyboard: natural size, shrunk only if it does not fit the window width or would take over 60% of the height
@@ -329,13 +402,14 @@ function layout(){
   // screen: largest SW:SH box inside the wrap (minus padding and the 6px border)
   const wrap=document.getElementById('screenwrap');
   const aw=wrap.clientWidth-20-12, ah=wrap.clientHeight-20-12;
-  const k=Math.max(0.1, Math.min(aw/SW, ah/SH)), dpr=window.devicePixelRatio||1;
+  const k=Math.max(0.1, Math.min(aw/(SW+2*OX), ah/(SH+2*OY))), dpr=window.devicePixelRatio||1;
   // Whole device pixels per cell, so every cell edge lands on a pixel boundary; with a fractional
   // scale the per-cell background fills leave anti-aliased seams (a faint grid) between characters.
   const cw=Math.max(1, Math.floor(CW*k*dpr)), ch=Math.max(1, Math.floor(CH*k*dpr));
-  cv.width=cw*SW/CW; cv.height=ch*SH/CH;
+  const mx=Math.round(cw*OX/CW), my=Math.round(ch*OY/CH);
+  cv.width=cw*SW/CW+2*mx; cv.height=ch*SH/CH+2*my;
   cv.style.width=(cv.width/dpr)+'px'; cv.style.height=(cv.height/dpr)+'px';
-  ctx.setTransform(cw/CW,0,0,ch/CH,0,0);
+  ctx.setTransform(cw/CW,0,0,ch/CH,mx,my);
   if(lastScr) render(lastScr);
 }
 window.addEventListener('resize',layout);
@@ -358,6 +432,15 @@ const FRAME={0x82:'h',0x86:'h',0x80:'h',0x81:'h',0x83:'h',0x84:'h',0x85:'h',0x87
 // bank 2 0x00-0x1F: frame pieces of pop-up windows (0x00-0x07) and the selection cursor box (0x16-0x1D)
 const BOX2={0x00:'rd',0x01:'ld',0x02:'ru',0x03:'lu',0x04:'h',0x05:'h',0x06:'v',0x07:'v',
   0x18:'rd',0x19:'ld',0x1a:'ru',0x1b:'lu',0x1c:'h',0x1d:'h',0x16:'v',0x17:'v'};
+// bank 0 0xC0: the frame's vertical line with the "*" that marks the selected deck in the POSITION block. The
+// line runs through unbroken and the star sits beside it, just before the deck name (as on the BVE-2000 screen).
+function markedLine(x,y){
+  seg(x,y,'v');
+  const cx=x+CW*0.79, cy=y+CH/2, r=2.6;
+  ctx.save(); ctx.lineWidth=1.3; ctx.lineCap='round'; ctx.beginPath();
+  for(const a of [90,30,150]){ const dx=r*Math.cos(a*Math.PI/180), dy=r*Math.sin(a*Math.PI/180); ctx.moveTo(cx-dx,cy-dy); ctx.lineTo(cx+dx,cy+dy); }
+  ctx.stroke(); ctx.restore();
+}
 function seg(x,y,spec){
   const cx=x+CW/2, cy=y+CH/2; ctx.beginPath();
   if(spec==='h'){ctx.moveTo(x,cy);ctx.lineTo(x+CW,cy);}
@@ -473,7 +556,7 @@ function glyph(ch,font,x,y,fg,bg){
     if(ch===0x9a) ctx.fillRect(x,y,2,CH); else if(ch===0x9b) ctx.fillRect(x,y,3,CH); return 1; }
   if(ch>0x20 && ch<0x7f){ if(font===2||font===6) text(String.fromCharCode(ch),x,y,SMALLPX,'bold'); else text(String.fromCharCode(ch),x,y,TEXTPX); return 1; }
   if(font===0 && ch>=0xe0){ text(String.fromCharCode(ch-0xa0),x,y,SMALLPX-1); return 1; } // small caps in frame lines
-  if(ch>=0x80){ const f=FRAME[ch]; if(f) seg(x,y,f); else if(ch===0xc0){ seg(x,y,'v'); text('*',x,y,TEXTPX); } else ctx.fillRect(x+4,y+8,4,4); }
+  if(ch>=0x80){ const f=FRAME[ch]; if(f) seg(x,y,f); else if(ch===0xc0) markedLine(x,y); else ctx.fillRect(x+4,y+8,4,4); }
   return 1;
 }
 // Transition diagram of the timeline (bank 3): two rows, outgoing source above (8C, A9, AA..B0, A9, 94..)
@@ -507,6 +590,10 @@ function drawTransition(b, fg){
 function render(scr){
   const pal=previewPal ? previewPal.map(v=>crt(v.map(x=>Math.floor(x*255/63)))) : scr.pal ? scr.pal.map(crt) : DEFPAL;
   const ovpal=previewPal ? previewPal.map((v,i)=>i ? crt(v.map(x=>Math.floor(x*255/63))) : 'rgb(0,0,0)') : (scr.ovpal||[]).map(crt);
+  // overscan margin: the most common cell background on the screen
+  { const n={}; let best='#000', bn=0;
+    if(scr.pal) for(const row of scr.rows) for(const cell of row){ const b=(cell[2]>>8)&15; n[b]=(n[b]||0)+1; if(n[b]>bn){ bn=n[b]; best=pal[b]; } }
+    ctx.save(); ctx.setTransform(1,0,0,1,0,0); ctx.fillStyle=best; ctx.fillRect(0,0,cv.width,cv.height); ctx.restore(); }
   ctx.fillStyle='#000'; ctx.fillRect(0,0,SW,SH);
   ctx.textBaseline='middle'; ctx.lineWidth=2;
   const blocks=transitionBlocks(scr.rows), skip=new Set();
@@ -616,6 +703,60 @@ const PRESETS=[['Sony factory',SONY_PAL], ...TUESDAY.map(([n,c,a])=>[n,schemePal
   const close=()=>{ panel.hidden=true; previewPal=null; if(lastScr) render(lastScr); };
   document.getElementById('palbtn').onclick=()=>{ if(panel.hidden){ panel.hidden=false; load(); } else close(); };
   document.getElementById('palclose').onclick=close;
+})();
+
+// ---- GPI lamps: the four GPI outputs from /status; a pulse lights its lamp for at least 300 ms (the editor's pulses can
+// be shorter than the poll)
+(function(){
+  if(window.BVE_WEB) return;
+  const box=document.getElementById('gpibox'), lamps=[...box.querySelectorAll('i')], until=[0,0,0,0]; let counts=null;
+  async function poll(){
+    try{ const st=await fetch('/status',{cache:'no-store'}).then(r=>r.json());
+      if(st.gpi){ box.hidden=false; const now=Date.now();
+        st.gpi.forEach((on,i)=>{ if(on || (counts && st.gpi_count[i]!==counts[i])) until[i]=Math.max(until[i], now+300);
+          lamps[i].classList.toggle('on', now<until[i]); });
+        counts=st.gpi_count; } }catch(e){}
+    setTimeout(poll,150); }
+  poll();
+})();
+
+// ---- OBS tape toolbar: shown while the OBS script (obs/bve9100_obs.py) answers on 127.0.0.1:8091 (?obs=PORT to change)
+(function(){
+  if(window.BVE_WEB) return;
+  const port=new URLSearchParams(location.search).get('obs')||'8091', base=`http://127.0.0.1:${port}/tape`;
+  const $=id=>document.getElementById(id), bar=$('obstape');
+  let timer=null, st=null;
+  function show(s){
+    st=s; bar.hidden=false;
+    $('otarm').checked=s.armed;
+    const rec=s.state==='recording'||s.state==='starting';
+    $('otlamp').className='lamp'+(rec?' rec':s.armed?' armed':'');
+    $('otlamp').title=rec?'OBS is recording this edit':s.armed?'armed: the next edit is recorded':'not recording edits';
+    const n=s.segments.length;
+    $('otinfo').textContent=n?`${n} seg  ${s.span.in}-${s.span.out}`:'empty';
+    $('otinfo').title=n?s.segments.map(g=>`${g.id}: ${g.in} - ${g.out}  ${g.tracks}  (${g.file})`).join('\n')+`\n\nfolder: ${s.folder}`:`folder: ${s.folder}`;
+    const e=s.export, m=$('otmsg'); m.className='msg'; m.title='';
+    if(e.state==='running') m.textContent=`exporting ${Math.round(e.progress*100)}%`;
+    else if(e.state==='done'){ m.textContent='exported '+e.file.split(/[\\/]/).pop(); m.title=e.file; }
+    else if(e.state==='failed'){ m.textContent='export failed'; m.title=e.error; m.className='msg err'; }
+    else m.textContent=s.connected?'':'OBS has no link to the emulator';
+    $('otexport').disabled=e.state==='running'||!n; $('otundo').disabled=!n; $('otclear').disabled=!n;
+  }
+  async function poll(){
+    clearTimeout(timer);
+    try{ const r=await fetch(base,{cache:'no-store'}); show(await r.json()); timer=setTimeout(poll,(st&&st.export.state==='running')?400:1000); }
+    catch(e){ bar.hidden=true; st=null; timer=setTimeout(poll,4000); }
+  }
+  async function cmd(c,body){
+    try{ const r=await fetch(`${base}/${c}`,{method:'POST',body:body||''}); const s=await r.json(); show(s); if(s.message&&r.status!==200){ $('otmsg').textContent=s.message; $('otmsg').className='msg err'; } }
+    catch(e){} poll();
+  }
+  function btn(id,f){ $(id).addEventListener('click',e=>{ e.currentTarget.blur(); f(); }); }
+  $('otarm').addEventListener('change',e=>{ e.target.blur(); cmd('arm',e.target.checked?'on':'off'); });
+  btn('otundo',()=>cmd('undo'));
+  btn('otclear',()=>{ if(confirm('Empty the record tape? The OBS recordings stay on disk.')) cmd('clear'); });
+  btn('otexport',()=>cmd('export'));
+  poll();
 })();
 </script>
 </body>

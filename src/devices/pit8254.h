@@ -14,12 +14,14 @@ public:
     // OUT pin edge callbacks (called on the rising edge of OUTn)
     std::function<void(int ch, bool level)> on_out;
     uint16_t count(int ch) const { return (uint16_t)c_[ch].count; }
+    // GATE input (high unless a board wires it): low holds modes 0, 2, 3 and 4; a rising edge (re)starts modes 1 and 5
+    void set_gate(int ch, bool g);
 private:
     struct Counter {
         uint16_t reload = 0; int count = 0; int mode = 0; int rw = 3; bool bcd = false;
         bool loaded = false; bool armed = false; bool out = true;
         int wr_phase = 0, rd_phase = 0; uint16_t latch = 0; bool latched = false;
-        bool null_count = true;
+        bool null_count = true; bool gate = true;
     } c_[3];
     void load(int ch);
     void clock(int ch, int n);

@@ -50,7 +50,7 @@ Items marked *(assumed)* are emulator choices that the firmware tolerates but th
 | `0F00_C000` | DMA page latch: 0xC0 \| address bit 24 | `dmahset` |
 | `0F00_D000` | SCSI reset | `hdinit` |
 | `0F00_E000` | bus-error cause register, bit0 (read by the kernel's bus error handler) | `_main` |
-| `0FF0_1000-0FF0_1FFF` | SPF: 8254 #1 at +0x001/3/5/7, 8254 #2 at +0x201/3/5/7, GPI latches +0xE03/+0xE07, status +0xFD1/+0xFD3, board ID +0xFD7 (hi nibble 1 = SPF-1/2, 3 = SPF-3, 4 = SPF-4 *(assumed)*) | `spfIdent`, DIAG |
+| `0FF0_1000-0FF0_1FFF` | SPF: 8254 #1 at +0x001/3/5/7, 8254 #2 at +0x201/3/5/7 (GPI pulse timers, see below), GPI trigger latch +0xE03, control latch +0xE07, status +0xFD1/+0xFD3, board ID +0xFD7 (hi nibble 1 = SPF-1/2, 3 = SPF-3, 4 = SPF-4 *(assumed)*) | `spfIdent`, DIAG |
 | `0FF0_2000-0FF0_3FFF` | IF-508 Ethernet board: 8 KB dual-port RAM. +0000 status (bit3 = board ready, `if508rdy`), +0002 presence probe (`if508moun` writes 0x5555), +0010 host/board command word (0xFFFF after board boot, host acks with 0, commands are `cmd|0x8000`), +0008/+000C interrupt vectors of the two net channels (0x4C/0x4D), +19C0 netsio command, +19C4 netsio status (bit 0x1000 ready), +19C8..+19D4 baud/char/stop/parity, +19D8 netsio vector (0x4E), +19DC TX count, +1A00 TX data, +19E0 RX count, +1B00 RX data, +1FF8 firmware magic 0xFF050800 (set only once the MIPS firmware is running), +1FFC doorbell | `net_init`, `netsioini`, `nsio*` |
 | `0FFF_1000` | SPF alternate decode (probe with 0x55/0xAA) | `spfIdent` |
 | `0FFF_9000 + n*0x1000` (n=0..6) | Option slots BKE#0..#6 (chassis slots 11..5 from the photo in `ref/`), 4 KB each. Board ID word at +0x3FE: `(id & 0xF000) == 0x2000` = RS-422 interface board; the kernel assigns channel vectors 0x60+2n | `supsio3` |
@@ -135,6 +135,21 @@ MAIN KYBD (25-pin), GPI (25-pin), PRINTER (37-pin), COLOR VDU (9-pin), B/W VDU (
   firmware magic at 0x0FF03FF8 is left clear so the application does not wait for Indy answers.
 * STRAPL also asks the hard-disk server task (`hddos`) for a mount; `hddos` only answers after the WD33C93 has
   completed its reset and probe commands with interrupts (reset -> status 0x00, select -> 0x42 "no target").
+* **GPI outputs (SPF).** Seen with GPI mode TEST FIRE and GPI events in a preview. The editor loads the port's
+  pulse timer (mode 4) with the pulse width, in ms × 16, so the timers count at 16 kHz: SETUP's GPI-n PULSE
+  WIDTH of 10 ms gives 160, TEST FIRE's 255 ms gives 4080. For an edit it loads the timer when the edit starts.
+  It fires the port by writing only that port's bit to the latch at +0xE03:
+
+  | Port | Latch bit | Timer |
+  |---|---|---|
+  | GPI-0 | bit 3 | 8254 #1 counter 0 |
+  | GPI-1 | bit 0 | 8254 #2 counter 0 |
+  | GPI-2 | bit 1 | 8254 #2 counter 1 |
+  | GPI-3 | bit 2 | 8254 #2 counter 2 |
+
+  Nothing clears the bit afterwards, so the emulator models each port as a flip-flop. The latch bit sets it and
+  raises the timer's GATE, and the timer's terminal count clears it. The pulse therefore lasts the programmed
+  width from the moment the port fires.
 * The kernel only runs its field-synchronous timer (`_tup2req`) when the SPF status register (0x0FF01E09)
   has bit 6 set (reference video present).
 * The DSC-63 keyboard/printer mailbox "reset" vector must not be raised after each command (it means
@@ -181,4 +196,4 @@ library CMNDB at 0xC0000000 / 0xD0000000.
 
 * CPU-88 monitor EPROM contents (9100M0): bus-error recovery for board probing, debug TRAP #14 services, initial register contract.
 * DSC-63 character generator ROM (CG banks 1-15): needed to render the large-font title screen.
-* Exact PIT input clocks (8 MHz assumed from the 9600 baud divisor), IPL assignment, IDC board register maps, GPI pinout.
+* Exact PIT input clocks (8 MHz assumed from the 9600 baud divisor; the SPF's 16 kHz from the GPI pulse widths), IPL assignment, IDC board register maps, GPI pinout.

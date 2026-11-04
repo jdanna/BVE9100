@@ -6,6 +6,8 @@ cd "$(dirname "$0")"
 [ -f work/sys1.img ] || ./tools/unpack_ref.sh
 [ -x build/bve9100 ] || { cmake -B build > /dev/null && cmake --build build -j; }
 mkdir -p work/run
+# a new machine starts as the web version's does (decks assigned, EDL DISPLAY and DISP RECORDED EDIT on)
+[ -f work/run/sram.bin ] || cp web/defaults/sram.bin work/run/sram.bin
 cp work/sys1.img work/run/a.img; cp work/sys2.img work/run/b.img
 PORT=${PORT:-8090}
 ( sleep 2; { open "http://127.0.0.1:$PORT/" || xdg-open "http://127.0.0.1:$PORT/"; } >/dev/null 2>&1 || true ) &

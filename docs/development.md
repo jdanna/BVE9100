@@ -27,10 +27,12 @@ online. See `docs/hardware.md` for the reconstructed memory map and `docs/firmwa
   emulator (`--no-keyassign` to disable), as a fresh machine's INIT MENU would.
 * RS-422 interface boards with virtual VTRs and a switcher (`src/devices/rs422.cpp`, `idc_peers.cpp`,
   protocol in `docs/rs422-idc.md`): timecode, transport, GO TO, jog/shuttle, PREVIEW and recorded edits work;
-  the switcher only answers status polls.
+  the switcher takes live crosspoints and runs each edit's timed cuts, mixes and wipes. SWMEM works through a
+  synthesised BVS-3000-style switcher descriptor (`hle_switcher_profile()`, `--no-swmem`). `obs/bve9100_obs.py`
+  links OBS Studio (`docs/obs.md`).
 * Not yet: the DSC-63 character-generator ROM (the browser UI draws the text fonts and the boot title with system
   fonts, and the SONY wallpaper and BVE-9100 wordmark from vector outlines made by `tools/gen_cg.py`, see
-  `docs/hardware.md`), switcher commands, hard disk.
+  `docs/hardware.md`), the switcher memory (SWMEM SET EFF) recall message, hard disk.
 
 ## Build and command-line runs
 
@@ -85,5 +87,6 @@ INIT, F3 (ASSIGN), F7, F4 (DFLT ALL), YES; this puts R on A and P1-P3 on B-D and
 lines then show timecode and transport state; PLAY, STOP, STILL, FF, REW, JOG/SHTL and GO TO (select deck,
 type timecode, SET IN, GO TO) work. PREVIEW, CTRL+REC (single edit) and AUTO REC run complete edits: the decks cue, roll in sync, the recorder punches in and out, and ALL STOP aborts. The search dial in the UI can be dragged (or scrolled) for JOG, SHTL and DMC. `GET /devices`
 shows device state and `POST /devices/<port>` (body `play`, `stop`, `cue <frame>`, ...) drives a device from
-outside; this is where video players or OBS will connect. Protocol notes: `docs/rs422-idc.md`.
+outside; `obs/bve9100_obs.py` uses it to run OBS media sources as the decks and OBS's program as the switcher
+(`docs/obs.md`). Protocol notes: `docs/rs422-idc.md`.
 

@@ -10,6 +10,12 @@ extern "C" unsigned int m68k_pmmu_enabled(void);
 #include <map>
 #include <algorithm>
 #include <sstream>
+#ifndef __EMSCRIPTEN__
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <unistd.h>
+#endif
 
 static volatile bool g_stop = false;
 static void on_sigint(int) { g_stop = true; }
@@ -82,7 +88,17 @@ Machine::Machine(const MachineConfig& cfg) : cfg_(cfg) {
     }
     for (auto& d : devs) {
         std::shared_ptr<IdcDevice> p;
-        if (d.kind == "vtr") p = std::make_shared<VirtualVtr>(d.type ? d.type : 0x0101);
+        if (d.kind == "vtr") {
+            auto v = std::make_shared<VirtualVtr>(d.type ? d.type : 0x0101);
+            // the tracks of the edit being executed (V A1-A4), in the editor's shared data. 0xD00274F4 holds them
+            // while AUTOX runs the edit; 0xD0020A42 (the edit page's own copy) turns V on during an audio-only edit.
+            v->edit_tracks = [this]() -> int {
+                if (!m68k_pmmu_enabled()) return -1;
+                const uint32_t la = 0xD00274F4;
+                return bus.read8(pmmu_translate_addr(la & ~0x3FFu) + (la & 0x3FF));
+            };
+            p = v;
+        }
         else if (d.kind == "switcher") p = std::make_shared<VirtualSwitcher>(d.type ? d.type : 0x1001);
         else if (d.kind == "probe") p = std::make_shared<IdcProbe>();
         else { fprintf(stderr, "unknown device kind '%s'\n", d.kind.c_str()); continue; }
@@ -114,6 +130,7 @@ Machine::Machine(const MachineConfig& cfg) : cfg_(cfg) {
         if (ch == 2) { icu0->set_irq(3, true); icu0->set_irq(3, false); }                 // 0x53 tup3req
     };
     spf->on_field = [this]() { icu1->set_irq(3, true); icu1->set_irq(3, false); };       // 0x5B fieldint
+    spf->on_gpi = [this](int port, bool on) { gpi_out(port, on); };
     console->on_rxrdy = [this](bool a) { icu1->set_irq(5, a); };                          // 0x5D sioirqrxt
     console->on_tx = [](uint8_t b) { fputc(b, stdout); fflush(stdout); };
 
@@ -126,7 +143,34 @@ Machine::Machine(const MachineConfig& cfg) : cfg_(cfg) {
     CpuGlue::install(&bus, &irq);
     build_rom();
 }
-Machine::~Machine() { save_state(); }
+Machine::~Machine() {
+    save_state();
+#ifndef __EMSCRIPTEN__
+    if (gpi_sock_ >= 0) close(gpi_sock_);
+#endif
+}
+
+// A standard GPI port goes active: count it and send "gpi N" (one datagram, N = port + gpi_base) to the GPI target,
+// by default the MAXINE! emulator's GPI listener on 127.0.0.1:49100, which closes that input for a moment (its own
+// pulse length, long enough for the MAXINE's debounce, whatever pulse width the editor's setup asks for).
+void Machine::gpi_out(int port, bool on) {
+    if (port < 0 || port > 3 || (!on && !gpi_on_[port])) return;   // a trigger while on restarts the pulse: send it again
+    gpi_on_[port] = on;
+    if (!on) { LOGD("GPI: port %d off\n", port); return; }
+    gpi_count_[port]++;
+    LOGI("GPI: port %d fired (%u)\n", port, gpi_count_[port]);
+#ifndef __EMSCRIPTEN__
+    if (cfg_.gpi_udp.empty()) return;
+    std::string host = cfg_.gpi_udp; int udp_port = 49100;
+    size_t c = host.rfind(':');
+    if (c != std::string::npos) { udp_port = atoi(host.c_str() + c + 1); host = host.substr(0, c); }
+    sockaddr_in a{}; a.sin_family = AF_INET; a.sin_port = htons((uint16_t)udp_port);
+    if (inet_pton(AF_INET, host.c_str(), &a.sin_addr) != 1) { LOGI("GPI: bad --gpi-udp address %s\n", cfg_.gpi_udp.c_str()); return; }
+    if (gpi_sock_ < 0) gpi_sock_ = socket(AF_INET, SOCK_DGRAM, 0);
+    char msg[32]; int n = snprintf(msg, sizeof msg, "gpi %d\n", port + cfg_.gpi_base);
+    if (gpi_sock_ >= 0) sendto(gpi_sock_, msg, n, 0, (sockaddr*)&a, sizeof a);
+#endif
+}
 
 // Minimal stand-in for the CPU-88 monitor ROM: reset vector + two exception stubs.
 void Machine::build_rom() {
@@ -212,6 +256,64 @@ void Machine::hle_keyassign_default() {
     keyassign_done_ = true;
     LOGI("HLE: default key assignment table copied (%08x -> %08x)\n", src, dst);
 }
+// The editor talks to a video switcher through a model-specific "switcher dialogue" library loaded at 0xC4000000
+// (data at 0xD4000000). The disks only carry SWDLG2, a stub whose switcher descriptor (pointer at 0xC400004E ->
+// 0xD4000004) is all zero: no banks, no registers and bit 7 of byte 0 clear, so SWMEM (SHIFT + MOD EVENT, the
+// switcher learn / E-FILE menu) answers UNSUPPORTED FUNCTION. The model libraries for the switchers the manual lists
+// (GVG 100-1680, Kadenza, A84, HDS-1000, Sony BVS-3000 series) are not available, so this fills the descriptor in
+// for a BVS-3000-style switcher: one bank (ME1) with E-FILE registers 0-99. Descriptor fields worked out from
+// MAIN, MDISP and STRAPL (offsets from 0xD4000004):
+//   +00 bit 7 SWMEM available              +08 w banks offered on F-keys (bank index bits)
+//   +0A w banks in bus-bit space (bit 0 P/P, 1 ME1, 2 ME2, 3 ME3; bank index -> bit through the table at +18)
+//   +0E w SWMEM function keys F1-F8        +12 / +13 lowest / highest register   +14 reserved registers (default)
+//   +15 default bank                       +18..1F bank index -> bus bit
+// String table (pointer at 0xC4000052): 8 entries each of 3-char bank names (0-7), 9-char names (8-15), 2-char
+// names (42-49) and more. Also sets the SWER LOCAL control modes the switcher needs to follow the editor:
+// PREVIEW MODE = PGM (0xD0079CAC = 3) and MONITOR SELECT = PGM (0xD0079CAD = 1). The edition's SETUP has no
+// video switcher group, so these are otherwise only set by hand after every boot.
+// AX1, AX2 and BLK have no switcher crosspoint until one is set (INIT > ASSIGN, second page, VIDEO EFF), so the editor
+// sends crosspoint FF for them and a CUT to BLACK does nothing. When the switcher is connected and they are still
+// unassigned, give them crosspoints 8, 9 and 10, after P1-P6 on 2-7 (the OBS script makes its BLACK / AX1 / AX2 scenes
+// on those). The table is in the battery SRAM: 5-byte records (video EFF, video MON, audio EFF, audio MON, -) for P1-P12,
+// AX1, AX2, BLK and EFF, AX1's at 0x00806156; FF = unassigned. The editor keeps no checksum over it.
+void Machine::hle_xpt_defaults() {
+    bool sw = false;
+    for (auto& pp : peers) if (std::string(pp.peer->kind()) == "switcher") sw = true;
+    if (!sw) return;
+    static const struct { uint32_t pa; uint8_t xpt; const char* name; } d[] = {
+        {0x00806156, 8, "AX1"}, {0x0080615B, 9, "AX2"}, {0x00806160, 10, "BLK"}};
+    for (auto& e : d)
+        if (bus.read8(e.pa) == 0xFF) { bus.write8(e.pa, e.xpt); LOGI("HLE: %s video crosspoint set to %d\n", e.name, e.xpt); }
+}
+
+void Machine::hle_switcher_profile() {
+    swmem_done_ = true;
+    if (!m68k_pmmu_enabled()) return;
+    bool sw = false;
+    for (auto& pp : peers) if (std::string(pp.peer->kind()) == "switcher") sw = true;
+    if (!sw) return;
+    auto xl = [&](uint32_t la) { return pmmu_translate_addr(la & ~0x3FFu) + (la & 0x3FF); };
+    auto rd32 = [&](uint32_t la) { return bus.read32(xl(la)); };
+    if (rd32(0xC400004E) != 0xD4000004 || bus.read8(xl(0xD4000004)) != 0 || bus.read8(xl(0xD4000000)) != '.') {
+        LOGI("HLE: switcher library not the SWDLG2 stub, left alone\n");
+        return;
+    }
+    auto w8 = [&](uint32_t la, uint8_t v) { bus.write8(xl(la), v); };
+    auto w16 = [&](uint32_t la, uint16_t v) { w8(la, (uint8_t)(v >> 8)); w8(la + 1, (uint8_t)v); };
+    const uint32_t D = 0xD4000004;
+    w8(D + 0x00, 0x80);
+    w16(D + 0x08, 0x0010);         // bank 4 ...
+    w16(D + 0x0A, 0x0002);         // ... which the table at +18 (05 04 03 02 01 00 06 07) makes bus bit 1 = ME1
+    w16(D + 0x0E, 0x00FF);
+    w8(D + 0x12, 0); w8(D + 0x13, 99); w8(D + 0x14, 0); w8(D + 0x15, 4);
+    auto str = [&](int idx, const char* s) {   // overwrite string-table entry idx in place (same length, blank-padded)
+        uint32_t a = rd32(rd32(0xC4000052) + 4 * idx);
+        for (int i = 0; bus.read8(xl(a + i)); i++) w8(a + i, (uint8_t)(*s ? *s++ : ' '));
+    };
+    str(4, "ME1"); str(12, "ME1"); str(46, "M1");
+    w8(0xD0079CAC, 3); w8(0xD0079CAD, 1);
+    LOGI("HLE: switcher library describes a BVS-3000-style switcher (SWMEM on, ME1 registers 0-99); PVW / MON SEL = PGM\n");
+}
 std::string Machine::symbolize(uint32_t addr) const {
     const AbsModule::Sym* best = nullptr;
     for (auto& s : syms_) if (s.addr <= addr && (!best || s.addr > best->addr)) best = &s;
@@ -246,6 +348,11 @@ void Machine::install_hooks() {
         }
         if (cfg_.trace_from && pc == cfg_.trace_from) CpuGlue::trace = true;
         if (cfg_.keyassign_default && !keyassign_done_ && pc == 0x01010e98 && g_cycles > 1500000000ull && current_task().find("MAIN") != std::string::npos) hle_keyassign_default();
+        if (!swmem_done_ && pc == 0x01010e98 && g_cycles > 1500000000ull && current_task().find("MAIN") != std::string::npos) {
+            swmem_done_ = true;
+            hle_xpt_defaults();
+            if (cfg_.swmem) hle_switcher_profile();
+        }
         for (auto t : cfg_.tracepoints) if (pc == t) {
             uint32_t sp = m68k_get_reg(nullptr, M68K_REG_SP);
             // in user mode the C arguments sit on the user stack at logical addresses (translate through the PMMU)
@@ -367,7 +474,9 @@ Httpd::Response Machine::handle(const Httpd::Request& r) {
         resp.status = ok ? 200 : 400; resp.body = ok ? "ok" : "unknown device or command";
     }
     else if (r.path == "/status") {
-        char b[256]; snprintf(b, sizeof b, "{\"cycles\":%llu,\"seconds\":%.2f,\"leds\":%u,\"realtime\":%s}", (unsigned long long)g_cycles, (double)g_cycles / CPU_HZ, misc->leds, cfg_.realtime ? "true" : "false");
+        char b[320]; snprintf(b, sizeof b, "{\"cycles\":%llu,\"seconds\":%.2f,\"leds\":%u,\"realtime\":%s,\"gpi\":[%d,%d,%d,%d],\"gpi_count\":[%u,%u,%u,%u]}",
+            (unsigned long long)g_cycles, (double)g_cycles / CPU_HZ, misc->leds, cfg_.realtime ? "true" : "false",
+            gpi_on_[0], gpi_on_[1], gpi_on_[2], gpi_on_[3], gpi_count_[0], gpi_count_[1], gpi_count_[2], gpi_count_[3]);
         resp.type = "application/json"; resp.body = b;
     }
     else if (r.path == "/key" && r.method == "POST") {       // body: hex bytes, e.g. "82 03 57"
@@ -411,6 +520,22 @@ Httpd::Response Machine::handle(const Httpd::Request& r) {
         const std::vector<uint8_t>* d = r.path == "/sram" ? &sram->data() : r.path == "/eeprom" ? &eeprom->data()
                                        : &fdc->image(r.path == "/disk/b" ? 1 : 0);
         resp.type = "application/octet-stream"; resp.body.assign(d->begin(), d->end());
+    }
+    // Debugging: POST /mem with "ADDR LEN" reads LEN bytes (hex dump), "ADDR = HEXBYTES" writes them. Addresses are
+    // physical, or logical (>= 0x80000000) translated through the PMMU as the running task sees them.
+    else if (r.path == "/mem" && r.method == "POST") {
+        std::istringstream ss(r.body); std::string a, b, c; ss >> a >> b >> c;
+        uint32_t addr = (uint32_t)strtoul(a.c_str(), nullptr, 16);
+        auto pa = [&](uint32_t la) { return (la >= 0x80000000 && m68k_pmmu_enabled()) ? pmmu_translate_addr(la & ~0x3FFu) + (la & 0x3FF) : la; };
+        std::string out;
+        if (b == "=") {
+            for (size_t i = 0; i + 1 < c.size(); i += 2) bus.write8(pa(addr + (uint32_t)(i / 2)), (uint8_t)strtoul(c.substr(i, 2).c_str(), nullptr, 16));
+            out = "ok";
+        } else {
+            uint32_t n = std::min<uint32_t>((uint32_t)strtoul(b.c_str(), nullptr, 0), 0x10000);
+            for (uint32_t i = 0; i < n; i++) { char h[4]; snprintf(h, sizeof h, "%02x", bus.read8(pa(addr + i))); out += h; }
+        }
+        resp.body = out;
     }
     else { resp.status = 404; resp.body = "unknown endpoint"; }
     return resp;
@@ -460,6 +585,11 @@ void Machine::run() {
             sw.done = true; fdc->save_images();
             if (fdc->load_image(sw.drive, sw.image, false)) misc->set_disk_changed(sw.drive);
             LOGI("FDC: disk swapped in drive %c -> %s\n", 'A' + sw.drive, sw.image.c_str());
+        }
+        for (auto& pk : cfg_.pokes) if (!pk.done && g_cycles >= pk.cycle) {
+            pk.done = true;
+            for (size_t i = 0; i < pk.bytes.size(); i++) bus.write8(pk.addr + (uint32_t)i, pk.bytes[i]);
+            LOGI("POKE: %zu bytes at %08x\n", pk.bytes.size(), pk.addr);
         }
         for (auto& k : cfg_.key_events) {
             if (!k.bytes.empty() && g_cycles >= k.cycle) { dsc->keyboard.deliver(k.bytes); LOGI("KEY: injected %zu bytes\n", k.bytes.size()); k.bytes.clear(); }

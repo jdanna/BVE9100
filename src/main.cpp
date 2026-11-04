@@ -15,6 +15,9 @@ static void usage() {
         "  --pal              50 Hz reference instead of 59.94 Hz\n"
         "  --no-if508         do not emulate the IF-508 network board\n"
         "  --no-keyassign     do not load the default key-assignment table into the application\n"
+        "  --gpi-udp HOST:PORT  send GPI outputs as \"gpi N\" UDP datagrams there (default 127.0.0.1:49100, the\n"
+        "                     MAXINE! emulator's GPI inputs); --no-gpi-udp to stop; --gpi-base N: port 0 = input N (1)\n"
+        "  --no-swmem         leave the switcher library as shipped (no SWMEM, preview / monitor switching off)\n"
         "  --cycles N         stop after N CPU cycles\n"
         "  --screen MS        redraw the text display every MS milliseconds of emulated time\n"
         "  --trace            instruction trace from the start\n"
@@ -37,6 +40,7 @@ static void usage() {
         "  --device P=KIND[:TYPE]  virtual device on RS-422 port P (A..): vtr, switcher (IDC type hex);\n"
         "                     default: VTRs on A-D, switcher on E\n"
         "  --no-devices       no RS-422 boards or virtual devices\n"
+        "  --poke CYC:A:HH..  write hex bytes to physical address A (hex) at the given cycle (debugging, repeatable)\n"
         "  --mem-dump A:L:F   write L bytes of physical memory from A (hex) to file F at exit (repeatable)\n"
         "  --buserr           raise a 68030 bus error on unmapped addresses (default: read as 0xFF, open bus)\n"
         "  --no-color         plain text screen dump\n"
@@ -58,6 +62,10 @@ int main(int argc, char** argv) {
         else if (a == "--no-if508") cfg.no_if508 = true;
         else if (a == "--kbd-type") cfg.kbd_type = (int)strtoul(next(), nullptr, 16);
         else if (a == "--no-keyassign") cfg.keyassign_default = false;
+        else if (a == "--no-swmem") cfg.swmem = false;
+        else if (a == "--gpi-udp") cfg.gpi_udp = next();
+        else if (a == "--no-gpi-udp") cfg.gpi_udp.clear();
+        else if (a == "--gpi-base") cfg.gpi_base = atoi(next());
         else if (a == "--syms") cfg.symbol_files.push_back(next());
         else if (a == "--profile") cfg.profile = true;
         else if (a == "--vram-dump") cfg.vram_dump = next();
@@ -98,6 +106,13 @@ int main(int argc, char** argv) {
             MachineConfig::KeyEvent ev; ev.cycle = strtoull(v.substr(0, c).c_str(), nullptr, 0);
             for (size_t i = c + 1; i < v.size();) { size_t e = v.find(',', i); if (e == std::string::npos) e = v.size(); ev.bytes.push_back((uint8_t)strtoul(v.substr(i, e - i).c_str(), nullptr, 16)); i = e + 1; }
             cfg.key_events.push_back(ev);
+        }
+        else if (a == "--poke") {           // --poke CYCLE:ADDR:HHHH...  bytes written to physical memory at a cycle
+            std::string v = next(); size_t c1 = v.find(':'), c2 = v.find(':', c1 + 1);
+            MachineConfig::PokeEvent ev; ev.cycle = strtoull(v.substr(0, c1).c_str(), nullptr, 0);
+            ev.addr = (uint32_t)strtoul(v.substr(c1 + 1, c2 - c1 - 1).c_str(), nullptr, 16);
+            for (size_t i = c2 + 1; i + 1 < v.size(); i += 2) ev.bytes.push_back((uint8_t)strtoul(v.substr(i, 2).c_str(), nullptr, 16));
+            cfg.pokes.push_back(ev);
         }
         else if (a == "--cycles") cfg.max_cycles = strtoull(next(), nullptr, 0);
         else if (a == "--screen") cfg.screen_every_ms = atoi(next());

@@ -49,8 +49,8 @@ void VirtualVtr::advance(double seconds) {
         for (auto& e : events_) {
             if (e.done || (double)e.frame > next) continue;
             e.done = true;
-            if (e.action == 0x12 && rec_armed_) { mode_ = REC; LOGI("IDC %s (vtr): record on at %s\n", label.c_str(), tc_string().c_str()); }
-            else if (e.action == 0x11 && mode_ == REC) { mode_ = PLAY; LOGI("IDC %s (vtr): record off at %s\n", label.c_str(), tc_string().c_str()); }
+            if (e.action == 0x12 && rec_armed_) { mode_ = REC; rec_start(e.frame, false); LOGI("IDC %s (vtr): record on at %s\n", label.c_str(), tc_string().c_str()); }
+            else if (e.action == 0x11 && mode_ == REC) { mode_ = PLAY; rec_stop(e.frame); LOGI("IDC %s (vtr): record off at %s\n", label.c_str(), tc_string().c_str()); }
         }
     }
     if (rolled_ && rec_end_ > rec_in_) {                 // safety: stop 10 s after the end of the post-roll if 23 01 never comes
@@ -167,11 +167,12 @@ std::vector<uint8_t> VirtualVtr::device_request(const std::vector<uint8_t>& m) {
         if (sub == 0x01 && (rolled_ || cued_ || synced_)) {
             LOGI("IDC %s (vtr): edit sequence end at %s\n", label.c_str(), tc_string().c_str());
             rolled_ = cued_ = cueing_ = synced_ = false; edit_done_ = true;
-            if (mode_ == REC) mode_ = PLAY;
+            if (mode_ == REC) { mode_ = PLAY; rec_stop(pos_); }
             mode_ = STILL; speed_ = 0;
         } else if (sub == 0x00) {
             if (rolled_ || cued_ || cueing_ || synced_) {
                 LOGI("IDC %s (vtr): edit sequence aborted at %s\n", label.c_str(), tc_string().c_str());
+                if (mode_ == REC) rec_stop(pos_);
                 mode_ = STILL; speed_ = 0;
             }
             rolled_ = cued_ = cueing_ = synced_ = edit_done_ = false;
@@ -204,6 +205,8 @@ std::vector<uint8_t> VirtualVtr::device_request(const std::vector<uint8_t>& m) {
     }
     if (cmd == 0x42 && sub == 0x06 && m.size() >= 5) {  // edit preset: bit 7 = recorder armed (auto edit), low bits = tracks
         rec_armed_ = (m[4] & 0x80) != 0;
+        preset_ = m[4];
+        LOGI("IDC %s (vtr): edit preset %02x\n", label.c_str(), m[4]);
         events_.clear();
         last_cmd_ = m;
         return {0x04, 0, 0x52, sub};
@@ -266,13 +269,26 @@ std::vector<uint8_t> VirtualVtr::device_request(const std::vector<uint8_t>& m) {
 
 std::string VirtualVtr::status_json() const {
     static const char* names[] = {"stop", "play", "ff", "rew", "still", "jog", "shuttle", "var", "rec", "ejected"};
-    char b[256];
-    snprintf(b, sizeof b, "{\"kind\":\"vtr\",\"label\":\"%s\",\"mode\":\"%s\",\"tc\":\"%s\",\"speed\":%.3f,\"tape\":%s}",
-             label.c_str(), names[mode_], tc_string().c_str(), speed_, tape_ ? "true" : "false");
+    std::string tn;
+    static const char* tnames[] = {"V", "A1", "A2", "A3", "A4"};
+    for (int i = 0; i < 5; i++) if (rec_tracks_ & (0x04 << i)) { if (!tn.empty()) tn += " "; tn += tnames[i]; }
+    char b[640];
+    // frame: tape position in frames (30 per timecode second, played at 29.97 per second), with the fraction
+    // edit: the edit sequence this deck is in (armed = recorder armed by the edit preset, active = cueing / parked /
+    // rolling, in / out = recorder in and out points); rec: the last recording (from / to in tape frames, to = -1 while
+    // recording; tracks: V 0x04, A1-A4 0x08-0x40, also spelt out in "track_names")
+    snprintf(b, sizeof b, "{\"kind\":\"vtr\",\"label\":\"%s\",\"mode\":\"%s\",\"tc\":\"%s\",\"frame\":%.2f,\"speed\":%.3f,\"tape\":%s,"
+             "\"edit\":{\"armed\":%s,\"active\":%s,\"preset\":%u,\"in\":%u,\"out\":%u},"
+             "\"rec\":{\"n\":%llu,\"from\":%.0f,\"to\":%.0f,\"tracks\":%u,\"track_names\":\"%s\",\"manual\":%s}}",
+             label.c_str(), names[mode_], tc_string().c_str(), pos_, speed_, tape_ ? "true" : "false",
+             rec_armed_ ? "true" : "false", (rolled_ || cued_ || cueing_ || synced_) ? "true" : "false", preset_, rec_in_, rec_out_,
+             (unsigned long long)rec_n_, rec_from_, rec_to_, rec_tracks_, tn.c_str(), rec_manual_ ? "true" : "false");
     return b;
 }
 
 bool VirtualVtr::control(const std::string& cmd, const std::string& arg) {
+    if (mode_ == REC && cmd != "rec") rec_stop(pos_);
+    else if (mode_ != REC && cmd == "rec") rec_start(pos_, true);
     cueing_ = false;
     if (cmd != "stop" && cmd != "still") cued_ = false;
     rolled_ = false; edit_done_ = false; synced_ = false;
@@ -289,6 +305,50 @@ bool VirtualVtr::control(const std::string& cmd, const std::string& arg) {
     else if (cmd == "load") { mode_ = STOP; speed_ = 0; tape_ = true; }
     else return false;
     return true;
+}
+
+static uint32_t be32(const std::vector<uint8_t>& m, size_t i) {
+    return i + 4 <= m.size() ? ((uint32_t)m[i] << 24) | ((uint32_t)m[i + 1] << 16) | ((uint32_t)m[i + 2] << 8) | m[i + 3] : 0;
+}
+
+void VirtualSwitcher::take(int to, int type, int frames, const char* why) {
+    take_++; take_from_ = pgm_; take_to_ = to; take_type_ = type; take_frames_ = type ? frames : 0;
+    if (!type || frames <= 0) { if (to != pgm_) pst_ = pgm_; pgm_ = to; in_trans_ = false; }
+    else { in_trans_ = true; trans_to_ = to; pst_ = to; trans_pos_ = 0; trans_len_ = frames; }
+    LOGI("IDC %s (switcher): %s %s to %d (%d frames, %s)\n", label.c_str(), why, type == 0 ? "cut" : type == 8 ? "wipe" : "mix",
+         to, take_frames_, running_ ? "edit timeline" : "live");
+}
+
+void VirtualSwitcher::advance(double seconds) {
+    double frames = seconds * fps_;
+    if (in_trans_) {
+        trans_pos_ += frames;
+        if (trans_pos_ >= trans_len_) { in_trans_ = false; pst_ = pgm_; pgm_ = trans_to_; }
+    }
+    if (!running_) return;
+    timeline_ += frames;
+    // events due now, in frame order (the list arrives in order; several can share a frame)
+    for (auto& e : events_) {
+        if (e.done || (double)e.frame > timeline_) continue;
+        e.done = true;
+        const auto& d = e.data;
+        char b[64]; snprintf(b, sizeof b, "%02x@%u", e.kind, e.frame); last_event_ = b;
+        if (e.kind == 0x40 && d.size() >= 5) {
+            // crosspoint: [type, ff, A, ff, B, ...]: type 0 = cut to A; 4 mix / 8 wipe = A on the program bus,
+            // B on the preset bus, taken by the transition event that follows
+            int type = d[0], A = d[2], B = d[4];
+            if (type == 0) { if (A != 0xFF && A != pgm_) take(A, 0, 0, "event"); }
+            else { trans_ = type; if (A != 0xFF && A != pgm_) take(A, 0, 0, "event"); if (B != 0xFF) pst_ = B; }
+        } else if (e.kind == 0x50 && d.size() >= 3) {
+            // transition: [type?, rate (fields, 16 bit)]: take the preset bus with the pending transition type
+            rate_ = ((d[1] << 8) | d[2]) / 2;
+            take(pst_, trans_ ? trans_ : 4, rate_, "event");
+        } else if (e.kind == 0x60 && d.size() >= 2) {
+            pattern_ = (d[0] << 8) | d[1];
+        } else {
+            LOGI("IDC %s (switcher): timed event %02x at %u not modelled\n", label.c_str(), e.kind, e.frame);
+        }
+    }
 }
 
 std::vector<uint8_t> VirtualSwitcher::device_request(const std::vector<uint8_t>& m) {
@@ -309,8 +369,31 @@ std::vector<uint8_t> VirtualSwitcher::device_request(const std::vector<uint8_t>&
         if (flags & 0x80) r.insert(r.end(), {0, 0});
         return r;
     }
-    std::string h; char b[4]; for (uint8_t x : m) { snprintf(b, sizeof b, "%02x ", x); h += b; }
-    LOGI("IDC %s (switcher): acked %s\n", label.c_str(), h.c_str());
+    if (cmd == 0x21 && sub == 0x40 && m.size() >= 9) {
+        // live crosspoint on the program bus (MONITOR SELECT = PGM: source keys, end of a preview): 21 40 00 02 00 ff xx
+        int x = m[8];
+        if (x != 0xFF && x != pgm_) take(x, 0, 0, "source key");
+        return {0x04, 0, 0x31, sub};
+    }
+    if (cmd == 0x41) {
+        // timed events on the edit timeline: 41 kk fl 02 <frame (4)> <data>; 41 00 = clear the list
+        if (sub == 0x00) { events_.clear(); running_ = false; }
+        else if (m.size() >= 10) {
+            Event e; e.frame = be32(m, 6); e.kind = sub; e.data.assign(m.begin() + 10, m.end());
+            events_.push_back(e);
+        }
+        return {0x04, 0, 0x51, sub};
+    }
+    if (cmd == 0x40 && sub == 0x00 && m.size() >= 8) {   // start the edit timeline (same value as the VTRs get)
+        timeline_ = (double)be32(m, 4); running_ = true;
+        LOGI("IDC %s (switcher): timeline started at %u, %zu events\n", label.c_str(), be32(m, 4), events_.size());
+        return {0x04, 0, 0x50, sub};
+    }
+    if (cmd == 0x24 && sub == 0x18) running_ = false;   // 24 10 at the roll, 24 18 at the end of the sequence
+    if (g_verbose >= 1 && !(cmd == 0x24 || cmd == 0x42 || cmd == 0x4F)) {
+        std::string h; char b[4]; for (uint8_t x : m) { snprintf(b, sizeof b, "%02x ", x); h += b; }
+        LOGI("IDC %s (switcher): acked %s\n", label.c_str(), h.c_str());
+    }
     return {0x04, 0, (uint8_t)(cmd + 0x10), sub};
 }
 
@@ -321,16 +404,29 @@ std::string VirtualSwitcher::status_json() const {
         char b[4]; for (uint8_t x : m) { snprintf(b, sizeof b, "%02x", x); last += b; }
         last += "\"";
     }
-    char buf[256];
-    snprintf(buf, sizeof buf, "{\"kind\":\"switcher\",\"label\":\"%s\",\"pgm\":%d,\"pst\":%d,\"transition\":%d,\"rate\":%d,\"snapshot\":%d,\"recent\":[",
-             label.c_str(), pgm_, pst_, trans_, rate_, snapshot_);
+    int pending = 0; for (auto& e : events_) if (!e.done) pending++;
+    const char* tn = trans_ == 8 ? "wipe" : trans_ == 4 ? "mix" : "cut";
+    const char* tk = take_type_ == 8 ? "wipe" : take_type_ ? "mix" : "cut";
+    char buf[768];
+    snprintf(buf, sizeof buf,
+             "{\"kind\":\"switcher\",\"label\":\"%s\",\"pgm\":%d,\"pst\":%d,\"transition\":\"%s\",\"rate\":%d,\"pattern\":%d,"
+             "\"in_transition\":%s,\"progress\":%.3f,\"take\":{\"n\":%llu,\"type\":\"%s\",\"from\":%d,\"to\":%d,\"frames\":%d},"
+             "\"timeline\":{\"running\":%s,\"frame\":%.0f,\"pending\":%d,\"last\":\"%s\"},\"snapshot\":%d,\"recent\":[",
+             label.c_str(), pgm_, pst_, tn, rate_, pattern_, in_trans_ ? "true" : "false", in_trans_ && trans_len_ > 0 ? trans_pos_ / trans_len_ : 0.0,
+             (unsigned long long)take_, tk, take_from_, take_to_, take_frames_, running_ ? "true" : "false", timeline_, pending,
+             last_event_.c_str(), snapshot_);
     return std::string(buf) + last + "]}";
 }
 
+// From outside the editor (HTTP POST /devices/<port>): pgm N (cut), pst N, cut (take the preset bus),
+// auto [frames] (transition to the preset bus), trans cut|mix|wipe, rate N (frames)
 bool VirtualSwitcher::control(const std::string& cmd, const std::string& arg) {
-    if (cmd == "pgm") pgm_ = atoi(arg.c_str());
+    if (cmd == "pgm") take(atoi(arg.c_str()), 0, 0, "remote");
     else if (cmd == "pst") pst_ = atoi(arg.c_str());
-    else if (cmd == "cut") std::swap(pgm_, pst_);
+    else if (cmd == "cut") take(pst_, 0, 0, "remote");
+    else if (cmd == "auto") take(pst_, trans_ ? trans_ : 4, arg.empty() ? rate_ : atoi(arg.c_str()), "remote");
+    else if (cmd == "trans") trans_ = arg == "wipe" ? 8 : arg == "mix" ? 4 : 0;
+    else if (cmd == "rate") rate_ = std::max(1, atoi(arg.c_str()));
     else return false;
     return true;
 }

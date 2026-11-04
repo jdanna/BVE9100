@@ -1,6 +1,15 @@
 #include "pit8254.h"
 
-void Pit8254::reset() { for (auto& c : c_) c = Counter(); acc_ = 0; }
+void Pit8254::reset() { for (auto& c : c_) { bool g = c.gate; c = Counter(); c.gate = g; } acc_ = 0; }
+
+void Pit8254::set_gate(int ch, bool g) {
+    Counter& c = c_[ch];
+    if (g && !c.gate && (c.mode == 1 || c.mode == 5) && c.loaded) {
+        c.count = c.reload ? c.reload : 0x10000; c.armed = true;
+        if (c.mode == 1) c.out = false;
+    }
+    c.gate = g;
+}
 
 uint8_t Pit8254::read8(uint32_t off) {
     int reg = (int)(off / stride_) & 3;
@@ -51,6 +60,7 @@ void Pit8254::load(int ch) {
 void Pit8254::clock(int ch, int n) {
     Counter& c = c_[ch];
     if (!c.armed) return;
+    if (!c.gate && c.mode != 1 && c.mode != 5) return;
     while (n > 0) {
         int step = n < c.count ? n : c.count;
         if (step <= 0) step = 1;
