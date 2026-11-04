@@ -33,6 +33,27 @@
   .key.gray { background:var(--gray); } .key.dark { background:var(--dark); color:#eee; } .key.dark .t { color:#ccc; }
   .key.w15 { width:80px; } .key.w2 { width:109px; } .key.w25 { width:137px; } .key.w9 { width:500px; } .key.tall { height:97px; }
   .key.gap { visibility:hidden; }
+  /* ENTER spans two rows as an inverted L: full width on the top row, only right of MAN on the row below */
+  .key.enter { background:transparent; box-shadow:none; justify-content:flex-start; padding-top:15px;
+               filter: drop-shadow(0 3px 0 #777) drop-shadow(0 3px 3px #0008); }
+  .key.enter::before { content:""; position:absolute; inset:0; z-index:-1; background:var(--key); border-radius:4px;
+               clip-path: polygon(0 0, 100% 0, 100% 100%, 29px 100%, 29px 46px, 0 46px); }
+  .key.enter:active, .key.enter.down { box-shadow:none; filter: drop-shadow(0 1px 0 #777); }
+  #palpanel { position:fixed; top:40px; right:12px; width:380px; max-width:calc(100vw - 24px); max-height:calc(100vh - 56px);
+              overflow:auto; background:#16181b; border:1px solid #444; border-radius:8px; box-shadow:0 10px 30px #000c;
+              padding:12px; z-index:20; font-size:12px; box-sizing:border-box; }
+  #palpanel[hidden] { display:none; }
+  #palpanel h3 { margin:0 0 8px; font-size:13px; color:#fff; letter-spacing:1px; display:flex; justify-content:space-between; align-items:center; }
+  #palpanel select { width:100%; background:#222; color:#eee; border:1px solid #555; padding:4px; margin-bottom:8px; }
+  #palpanel .prow { display:grid; grid-template-columns:22px 34px 1fr 74px 60px; gap:6px; align-items:center; padding:2px 0; }
+  #palpanel .prow input[type=color] { width:34px; height:22px; padding:0; border:1px solid #555; background:none; cursor:pointer; }
+  #palpanel .prow input[type=text] { width:66px; background:#222; color:#eee; border:1px solid #555; padding:2px 4px; font-family:monospace; }
+  #palpanel .idx { color:#888; text-align:right; } #palpanel .raw { color:#888; font-family:monospace; font-size:11px; }
+  #palpanel .note { color:#999; margin:8px 0; line-height:1.4; }
+  #palpanel .btns { display:flex; gap:8px; flex-wrap:wrap; margin-top:10px; }
+  #palpanel button, #top button { background:#333; color:#eee; border:1px solid #666; padding:4px 10px; cursor:pointer; border-radius:3px; }
+  #palpanel button.primary { background:#2d5d8a; border-color:#4a86c0; }
+  #palstatus { color:#9c9; margin-top:8px; min-height:1em; }
   .key.unv::after { content:"?"; position:absolute; top:1px; right:3px; font-size:8px; color:#a33; }
   .key.held { outline:2px solid #ffeb3b; }
   .key .led { position:absolute; top:3px; right:4px; width:7px; height:7px; border-radius:50%; background:#3a1a12; box-shadow:0 0 1px #000 inset; }
@@ -51,7 +72,18 @@
 </style>
 </head>
 <body>
-<div id="top"><b>BVE-9100</b></div>
+<div id="top"><b>BVE-9100</b><span style="flex:1"></span><button id="palbtn" title="Edit the editor's colour palette and inject it into SRAM">Palette</button></div>
+<div id="palpanel" hidden>
+  <h3><span>VDU COLOUR PALETTE</span><button id="palclose" title="Close">✕</button></h3>
+  <select id="palpreset"></select>
+  <div id="palrows"></div>
+  <div class="note">Changes preview on the screen; <b>Inject</b> writes them into the setup database in SRAM (as
+    INIT &gt; LAYOUT &gt; PALETTE would) and the editor uses them at once. They are kept in work/run/sram.bin when the
+    emulator is stopped with Ctrl-C. Colour 0 draws the frame lines (the menu cannot change it), 8 is the
+    default screen background.</div>
+  <div class="btns"><button class="primary" id="palinject">Inject into SRAM</button><button id="palreload">Reload from SRAM</button></div>
+  <div id="palstatus"></div>
+</div>
 <div id="screenwrap"><canvas id="screen" width="960" height="580"></canvas></div>
 <div id="kbd">
   <div class="brand"><span>SONY</span><span>BVE-9100 SYSTEM</span></div>
@@ -133,7 +165,7 @@ const MAIN = [
   [K("PREVIEW","PREVIEW",{t:"CAPS\nMULTI-PVW",shift:"MULTI-PVW",w:"w15",s:"LEARN",ctrl:"LEARN"}), K("P-PVW","P-PVW",{t:"Q\nMPPVW",shift:"MPPVW",s:"P-LRN",ctrl:"P-LEARN"}), K("R-PVW","R-PVW",{t:"W\nSWPVW",shift:"SWPVW",s:"SQ-PVW",ctrl:"S QUICK PVW"}),
    K("REC\nOFF","REC OFF",{t:"E\nAUTO\nREC",shift:"AUTO REC",c:"red",s:"REC",ctrl:"REC"}), K("RE-\nPLAY","REPLAY",{t:"R\nHCPVW",shift:"H CACHE PVW"}), K("GO TO","GO TO",{t:"T\nSYNC-\nPLAY",shift:"SYNC PLAY",s:"PREROLL",ctrl:"PREROLL"}),
    K("GPI","GPI",{t:"Y\nAUX",shift:"AUX",c:"purple",s:"BAK AUX",ctrl:"BAK AUX"}), K("V","V",{t:"U\nASMBL",shift:"ASMBL",c:"purple",s:"1ST-ED",ctrl:"1ST - ED"}), K("A1","A1",{t:"I\nA3",shift:"A3",c:"purple",s:"PREREAD",ctrl:"PREREAD"}),
-   K("A2","A2",{t:"O\nA4",shift:"A4",c:"purple"}), K("CUT","CUT",{t:"P",c:"pink",ctrl:"CTL+CUT"}), K("DISS","DISS",{c:"pink",ctrl:"CTL+DISS"}), K("WIPE","WIPE",{c:"pink"}), K("ENTER","ENTER",{w:"w15",cls:"tall",shift:"SFT+ENTER",ctrl:"CTL+ENTER"})],
+   K("A2","A2",{t:"O\nA4",shift:"A4",c:"purple"}), K("CUT","CUT",{t:"P",c:"pink",ctrl:"CTL+CUT"}), K("DISS","DISS",{c:"pink",ctrl:"CTL+DISS"}), K("WIPE","WIPE",{c:"pink"}), K("ENTER","ENTER",{w:"w15",cls:"tall enter",shift:"SFT+ENTER",ctrl:"CTL+ENTER"})],
   [K("CTRL","",{c:"red",mod:"ctrl"}), K("R","R",{c:"blue",s:"ALL R",ctrl:"ALL R"}), K("P1","P1",{t:"A",c:"blue",s:"P7",ctrl:"P7"}), K("P2","P2",{t:"S",c:"blue",s:"P8",ctrl:"P8"}),
    K("P3","P3",{t:"D",c:"blue",s:"P9",ctrl:"P9"}), K("P4","P4",{t:"F",c:"blue",s:"P10",ctrl:"P10"}), K("P5","P5",{t:"G",c:"blue",s:"P11",ctrl:"P11"}), K("P6","P6",{t:"H",c:"blue",s:"P12",ctrl:"P12"}),
    K("SPLIT","SPLIT",{t:"J\nSPEED",shift:"SPEED"}), K("BACK\nIN SET","SET IN",{t:"K",shift:"BACK-IN",c:"yellow",s:"SY-TIME",ctrl:"SY-TIME"}), K("BACK\nOUT SET","SET OUT",{t:"L",shift:"BACK-OUT",c:"yellow"}),
@@ -191,6 +223,7 @@ function searchLeds(l){
   document.getElementById('ledfwd').classList.toggle('on',dir>0);
 }
 let shift=false, ctrl=false;
+const KEYEL={};   // wire code -> on-screen key that sends it (first one wins: main block before the numeric pad)
 function mk(k){
   const d=document.createElement('div');
   d.className='key '+(k.c||'')+' '+(k.w||'')+' '+(k.cls||'');
@@ -209,6 +242,7 @@ function mk(k){
     d.classList.add('down'); setTimeout(()=>d.classList.remove('down'),150);
   };
   d.dataset.mod=k.mod||'';
+  for(const fn of [k.fn,k.shift,k.ctrl]){ const c=fn&&WIRE[fn]; if(c && !KEYEL[c]) KEYEL[c]=d; }
   return d;
 }
 function refreshMods(){ document.querySelectorAll('.key').forEach(e=>{ if(e.dataset.mod==='shift') e.classList.toggle('held',shift); if(e.dataset.mod==='ctrl') e.classList.toggle('held',ctrl);}); }
@@ -244,7 +278,7 @@ const SHIFT_FK={F1:'MONI-R',F2:'MONI-P1',F3:'MONI-P2',F4:'MONI-P3',F5:'MONI-P4',
 const PHYS_SHIFT={'1':'LOAD EDL','2':'SAVE EDL','3':'MOD EDL','4':'CRCT','5':'INSRT','6':'DEL','7':'MOVE','8':'NOTE','9':'LAST EDIT','0':'RECALL'};
 const PHYS_CTRL={'3':'STOR ED','4':'APPEND','7':'COPY','0':'RECAL SCROL','e':'REC','t':'PREROLL','y':'BAK AUX','u':'1ST - ED','i':'PREREAD','q':'P-LEARN','w':'S QUICK PVW','a':'P7','s':'P8','d':'P9','f':'P10','g':'P11','h':'P12','k':'SY-TIME','z':'FREEZE-OFF','x':'FREEZE-ON','c':'STANDBY OFF','v':'MEM PLAY','b':'EJECT','n':'TRACK SCROL','m':'MRK SPD',',':'LAST MARK','.':'MULTI-SCRPD','/':'RECAL SEGMT','p':'CTL+CUT',' ':'CTL+ALLSTOP',Enter:'CTL+ENTER',ArrowUp:'CTL+UP',ArrowDown:'CTL+DOWN',ArrowLeft:'CTL+LEFT',ArrowRight:'CTL+RIGHT'};
 document.addEventListener('keydown',e=>{
-  if(e.target.tagName==='INPUT') return;
+  if(['INPUT','SELECT','TEXTAREA','BUTTON'].includes(e.target.tagName)) return;
   let code=null;
   if(e.ctrlKey && PHYS_CTRL[e.key]) code=WIRE[PHYS_CTRL[e.key]];
   else if(e.ctrlKey && PHYS_CTRL[e.key.toLowerCase()]) code=WIRE[PHYS_CTRL[e.key.toLowerCase()]];
@@ -253,8 +287,14 @@ document.addEventListener('keydown',e=>{
   else if(e.shiftKey && SHIFT_FK[e.key]) code=WIRE[SHIFT_FK[e.key]];
   else if(FK[e.key]) code=WIRE[FK[e.key]];
   else if(e.key.length===1 && e.key.charCodeAt(0)>=0x20 && e.key.charCodeAt(0)<0x7f) code=e.key.charCodeAt(0).toString(16);
-  if(code){ e.preventDefault(); send(code); }
+  if(code){ e.preventDefault(); send(code); pressKey(code, e.code); }
 });
+// Physical keys light the on-screen key they stand for while held
+const HELD={};
+function pressKey(code, phys){ const el=KEYEL[code]; if(!el) return; if(HELD[phys] && HELD[phys]!==el) HELD[phys].classList.remove('down');
+  HELD[phys]=el; el.classList.add('down'); }
+document.addEventListener('keyup',e=>{ const el=HELD[e.code]; if(el){ el.classList.remove('down'); delete HELD[e.code]; } });
+window.addEventListener('blur',()=>{ for(const k in HELD){ HELD[k].classList.remove('down'); delete HELD[k]; } });
 
 // ---------------------------------------------------------------------------------------------
 // Screen rendering: 80 x 29 cells of [char, CG bank, attribute]. Attribute bits 0-3 = colour index,
@@ -272,7 +312,7 @@ const CW=12, CH=20, cv=document.getElementById('screen'), ctx=cv.getContext('2d'
 // Native screen size in cells * pixels; the canvas is scaled to fill the space above the keyboard and its
 // backing store follows the displayed size (times devicePixelRatio) so text stays sharp.
 const SW=960, SH=580;
-let lastScr=null;
+let lastScr=null, previewPal=null;   // previewPal: palette editor preview (6-bit RGB x 16) or null
 function layout(){
   // keyboard: natural size, shrunk only if it does not fit the window width or would take over 60% of the height
   const kbd=document.getElementById('kbd');
@@ -416,8 +456,8 @@ function drawTransition(b, fg){
   ctx.lineWidth=2;
 }
 function render(scr){
-  const pal=scr.pal ? scr.pal.map(crt) : DEFPAL;
-  const ovpal=(scr.ovpal||[]).map(crt);
+  const pal=previewPal ? previewPal.map(v=>crt(v.map(x=>Math.floor(x*255/63)))) : scr.pal ? scr.pal.map(crt) : DEFPAL;
+  const ovpal=previewPal ? previewPal.map((v,i)=>i ? crt(v.map(x=>Math.floor(x*255/63))) : 'rgb(0,0,0)') : (scr.ovpal||[]).map(crt);
   ctx.fillStyle='#000'; ctx.fillRect(0,0,SW,SH);
   ctx.textBaseline='middle'; ctx.lineWidth=2;
   const blocks=transitionBlocks(scr.rows), skip=new Set();
@@ -449,6 +489,83 @@ async function tick(){
 }
 layout();
 setInterval(tick,100); setInterval(()=>{blinkPhase^=1;},500); tick();
+
+// ---------------------------------------------------------------------------------------------
+// Palette editor: the 16 VDU colours of INIT > LAYOUT > PALETTE, 6-bit RGB, read and written through
+// /palette (the emulator writes them into the SRAM setup database). The editor works in displayed colours:
+// the screen applies a CRT gamma (crt() above), so a picked colour is stored as 63 * (c/255)^(1/1.6).
+// ---------------------------------------------------------------------------------------------
+const PALNAMES=['WHITE (frame lines)','RED','GREEN','YELLOW','BLUE','MAGENTA','CYAN','WHITE','DARK GREEN (background)',
+  'ASH BLUE','VERMILION','PALE PINK','MOSS GREEN','LIGHT BLUE','BRIGHT YELLOW','GRAY'];
+const SONY_PAL=[[63,63,63],[63,0,0],[0,57,0],[57,57,0],[0,0,63],[57,0,57],[0,57,57],[57,57,57],[0,12,4],[0,17,39],
+  [59,14,6],[59,20,34],[0,25,7],[0,36,57],[58,33,8],[30,30,30]];
+const hexRgb=h=>[1,3,5].map(i=>parseInt(h.slice(i,i+2),16));
+const rgbHex=a=>'#'+a.map(v=>Math.max(0,Math.min(255,Math.round(v))).toString(16).padStart(2,'0')).join('');
+const mix=(a,b,t)=>rgbHex(hexRgb(a).map((v,i)=>v*(1-t)+hexRgb(b)[i]*t));
+const to6=h=>hexRgb(h).map(v=>Math.round(63*Math.pow(v/255,1/1.6)));
+const from6=v=>rgbHex(v.map(x=>255*Math.pow(x/63,1.6)));
+// Tuesday's colour schemes (Tuesday/frontend/src/theme/schemes.ts): "bg surface text muted accent danger warning
+// success" and the terminal colours "red green yellow blue magenta cyan". 14 colours, onto the 16 slots by role:
+// frame lines and white = text (white a little dimmer, as on the Sony palette), the six colour slots = the terminal
+// colours, background = bg, ash blue (panels) = surface, vermilion = danger, pale pink = magenta towards text,
+// moss green = success, light blue = accent, bright yellow (amber) = warning, gray = muted.
+const TUESDAY=[
+  ['Tuesday Dark','#080810 #0f0f1a #e2e8f0 #94a3b8 #65b3a1 #d17a75 #d0ad62 #6db086','#d17a75 #6db086 #d0ad62 #799ecd #ce8dad #62adbc'],
+  ['Tuesday Light','#f6f6f9 #ffffff #12131c #535a6b #347969 #b4554f #a8843a #3f8a5c','#d17a75 #6db086 #d0ad62 #799ecd #ce8dad #62adbc'],
+  ['Gotham','#0c1014 #11151c #99d1ce #599cab #2aa889 #e0574c #edb443 #2aa889','#c23127 #2aa889 #edb443 #195466 #888ca6 #33859e'],
+  ['GitHub Dark','#010409 #0d1117 #e6edf3 #8d96a0 #58a6ff #ff7b72 #d29922 #3fb950','#ff7b72 #3fb950 #d29922 #58a6ff #bc8cff #39c5cf'],
+  ['GitHub Dimmed','#1c2128 #22272e #adbac7 #8b949e #539bf5 #f47067 #c69026 #57ab5a','#f47067 #57ab5a #c69026 #539bf5 #b083f0 #39c5cf'],
+  ['GitHub Light','#f6f8fa #ffffff #1f2328 #59636e #0969da #cf222e #9a6700 #1a7f37','#cf222e #116329 #9a6700 #0969da #8250df #1b7c83'],
+  ['Cobalt2','#122738 #193549 #ffffff #9fb3c8 #ffc600 #ff628c #ff9d00 #3ad900','#ff0000 #38de21 #ffe50a #1460d2 #ff005d #00bbbb'],
+  ['Noctis','#03191b #052529 #b2cacd #87a7ab #49d6e9 #e66533 #e4b781 #49e9a6','#e66533 #49e9a6 #e4b781 #49ace9 #df769b #49d6e9'],
+  ['Noctis Lux','#f6edda #fef8ec #005661 #5e7b80 #0087a0 #e34e1c #c4720f #00a35e','#e34e1c #00b368 #f49725 #0094f0 #ff5792 #00bdd6'],
+  ['Solarized Dark','#002b36 #073642 #93a1a1 #839496 #268bd2 #dc322f #b58900 #859900','#dc322f #859900 #b58900 #268bd2 #d33682 #2aa198'],
+  ['Solarized Light','#eee8d5 #fdf6e3 #073642 #657b83 #268bd2 #dc322f #b58900 #859900','#dc322f #859900 #b58900 #268bd2 #d33682 #2aa198'],
+  ['Nord','#2e3440 #3b4252 #eceff4 #a3abbd #88c0d0 #bf616a #ebcb8b #a3be8c','#bf616a #a3be8c #ebcb8b #81a1c1 #b48ead #88c0d0'],
+  ['Nord Light','#e5e9f0 #eceff4 #2e3440 #4c566a #5e81ac #bf616a #d08770 #6f8f55','#bf616a #a3be8c #ebcb8b #81a1c1 #b48ead #88c0d0'],
+  ['Shades of Purple','#1e1e3f #2d2b55 #ffffff #a599e9 #fad000 #ec3a37 #ff9d00 #3ad900','#ec3a37 #3ad900 #fad000 #6943ff #ff2c70 #80fcff'],
+  ['Tokyo Night','#16161e #1a1b26 #c0caf5 #9aa5ce #7aa2f7 #f7768e #e0af68 #9ece6a','#f7768e #9ece6a #e0af68 #7aa2f7 #bb9af7 #7dcfff'],
+  ['Tokyo Night Storm','#1f2335 #24283b #c0caf5 #9aa5ce #7aa2f7 #f7768e #e0af68 #9ece6a','#f7768e #9ece6a #e0af68 #7aa2f7 #bb9af7 #7dcfff'],
+  ['Tokyo Night Day','#d0d5e3 #e1e2e7 #3760bf #6172b0 #2e7de9 #f52a65 #8c6c3e #587539','#f52a65 #587539 #8c6c3e #2e7de9 #9854f1 #007197'],
+  ['Quiet Day','#eeeadf #e6e9e2 #1b1f1c #616b65 #4a6e7a #8f5a42 #85602e #586e5c','#8f5a42 #586e5c #85602e #4a6e7a #755e82 #4c706b'],
+  ['Quiet Night','#1c1e1c #242925 #e2e0d7 #9aa29c #789aa3 #c47d6b #b49a67 #879a83','#c47d6b #879a83 #b49a67 #789aa3 #9c89b4 #7a9c93'],
+];
+function schemePal(core, ansi){
+  const [bg,surface,text,muted,accent,danger,warning,success]=core.split(' '), [red,green,yellow,blue,magenta,cyan]=ansi.split(' ');
+  return [text,red,green,yellow,blue,magenta,cyan,mix(text,bg,0.12),bg,surface,danger,mix(magenta,text,0.4),success,accent,warning,muted].map(to6);
+}
+const PRESETS=[['Sony factory',SONY_PAL], ...TUESDAY.map(([n,c,a])=>[n,schemePal(c,a)])];
+(function(){
+  const panel=document.getElementById('palpanel'), rows=document.getElementById('palrows'), sel=document.getElementById('palpreset'),
+        status=document.getElementById('palstatus');
+  let cur=null, stored=null;
+  sel.innerHTML='<option value="">Load a preset…</option>'+PRESETS.map(([n],i)=>`<option value="${i}">${n}</option>`).join('');
+  const ROWS=PALNAMES.map((n,i)=>{
+    const r=document.createElement('div'); r.className='prow';
+    r.innerHTML=`<span class="idx">${i}</span><input type="color"><span>${n}</span><input type="text" maxlength="7" spellcheck="false"><span class="raw"></span>`;
+    const [col,hex]=r.querySelectorAll('input');
+    const set=h=>{ if(!/^#[0-9a-f]{6}$/i.test(h)) return; cur[i]=to6(h); show(); preview(); };
+    col.oninput=()=>set(col.value); hex.onchange=()=>set(hex.value.startsWith('#')?hex.value:'#'+hex.value);
+    rows.appendChild(r); return {col,hex,raw:r.querySelector('.raw')};
+  });
+  function show(){ cur.forEach((v,i)=>{ const h=from6(v); ROWS[i].col.value=h; ROWS[i].hex.value=h; ROWS[i].raw.textContent=v.join(' '); }); }
+  function preview(){ previewPal=cur.map(v=>v.slice()); if(lastScr) render(lastScr); }
+  const say=(t,bad)=>{ status.textContent=t; status.style.color=bad?'#e88':'#9c9'; };
+  async function load(){
+    try{ const j=await fetch('/palette').then(r=>r.json()); stored=j.pal; cur=stored.map(v=>v.slice()); show(); previewPal=null; if(lastScr) render(lastScr); say('Loaded the palette from SRAM.'); }
+    catch(e){ say('Could not read /palette (is the emulator running a build with the palette endpoint?)',true); }
+  }
+  sel.onchange=()=>{ if(sel.value==='') return; cur=PRESETS[+sel.value][1].map(v=>v.slice()); show(); preview(); say(`Previewing "${PRESETS[+sel.value][0]}". Inject to keep it.`); sel.value=''; };
+  document.getElementById('palinject').onclick=async()=>{
+    try{ const r=await fetch('/palette',{method:'POST',body:cur.flat().join(' ')}); if(!r.ok) throw new Error(await r.text());
+      stored=(await r.json()).pal; previewPal=null; say('Injected into SRAM. Stop the emulator with Ctrl-C to save it to work/run/sram.bin.'); }
+    catch(e){ say('Inject failed: '+e.message,true); }
+  };
+  document.getElementById('palreload').onclick=load;
+  const close=()=>{ panel.hidden=true; previewPal=null; if(lastScr) render(lastScr); };
+  document.getElementById('palbtn').onclick=()=>{ if(panel.hidden){ panel.hidden=false; load(); } else close(); };
+  document.getElementById('palclose').onclick=close;
+})();
 </script>
 </body>
 </html>

@@ -34,6 +34,14 @@ uint8_t Dsc63::keyboard_read_reg(uint8_t reg) { if (reg == 0x5A) return kbd_type
 void Dsc63::reset() { keyboard.reset(); printer.reset(); dial_ = 0; dial_mode_ = 3; lamp_src_ = 0; lamp_audio_ = 0; }
 // The dial counter lives at mailbox offset 0x102 (0x0D01CB02); the offset word at 0x0D01CBE0 points at it.
 static constexpr uint32_t DIAL_PTR = 0x1CBE0, DIAL_OFS = 0x100, DIAL_CNT = 0x1CA02 + DIAL_OFS;
+void Dsc63::set_palette(int i, uint8_t r, uint8_t g, uint8_t b) {
+    if (i < 0 || i > 15) return;
+    uint8_t c[3] = {(uint8_t)(r & 63), (uint8_t)(g & 63), (uint8_t)(b & 63)};
+    uint8_t* e = &regs_[i * 16];
+    for (int k = 0; k < 3; k++) { e[k] = c[k]; e[4 + k] = c[k] >> 1; e[8 + k] = e[12 + k] = 63 - c[k]; }
+    if (i) for (int k = 0; k < 3; k++) regs_[0x100 + i * 4 + k] = c[k];
+    screen_dirty = true;
+}
 void Dsc63::dial_add(int counts) { dial_ = (int16_t)(dial_ + counts); }
 void Dsc63::tick(uint32_t c) { keyboard.tick(c); printer.tick(c); }
 uint8_t Dsc63::read8(uint32_t off) {

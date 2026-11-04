@@ -38,7 +38,7 @@ void VirtualVtr::cue_to(double frame) {
 void VirtualVtr::advance(double seconds) {
     if (cued_ && synced_) {                              // waiting for the start time on the edit timeline
         timeline_ += seconds * fps_;
-        if (timeline_ >= pos_) {
+        if (timeline_ >= timeline_pos()) {
             LOGI("IDC %s (vtr): roll from %s\n", label.c_str(), tc_string().c_str());
             cued_ = false; synced_ = false; mode_ = PLAY; speed_ = 1; rolled_ = true;
         }
@@ -182,12 +182,14 @@ std::vector<uint8_t> VirtualVtr::device_request(const std::vector<uint8_t>& m) {
     if (cmd == 0x60) {
         // Edit-sequencer senses; data replies 70 xx with the payload sizes from the host's template table
         // (CMNDB 0xD002E3A6): 70 00: 4, 70 01: 9, 70 02: 5, 70 03: 4, 70 04: 7, 70 10: 4, 70 20: 12 bytes.
-        // AUTOX sends 60 03 to every parked deck before the start and stores the 4 bytes (taken here to be the
-        // deck's current position as a frame count).
+        // AUTOX sends 60 03 to every parked deck before the start and stores the 4 bytes: the deck's position on
+        // the edit timeline (recorder timecode), from which it works out the start time it sends with 40 00.
+        // Answering the raw tape position breaks edits whose source and recorder in points differ: AUTOX then
+        // counts the timeline in the player's timecode and expects the recorder to roll that much later.
         static const struct { uint8_t sub, n; } sizes[] = {{0x00,4},{0x01,9},{0x02,5},{0x03,4},{0x04,7},{0x10,4},{0x20,12}};
         std::vector<uint8_t> r = {0x02, 0, 0x70, sub};
         int n = 0; for (auto& z : sizes) if (z.sub == sub) n = z.n;
-        uint32_t fc = (uint32_t)(int64_t)pos_;
+        uint32_t fc = (uint32_t)(int64_t)(sub == 0x03 ? timeline_pos() : pos_);
         if (n >= 4) r.insert(r.end(), {(uint8_t)(fc >> 24), (uint8_t)(fc >> 16), (uint8_t)(fc >> 8), (uint8_t)fc});
         while ((int)r.size() < 4 + n) r.push_back(0);
         last_cmd_ = m;
@@ -209,10 +211,10 @@ std::vector<uint8_t> VirtualVtr::device_request(const std::vector<uint8_t>& m) {
     if (cmd == 0x40 && m.size() >= 8) {                  // edit set-up from PREVIEW / AUTO EDIT: points as frame counts
         uint32_t v = ((uint32_t)m[4] << 24) | ((uint32_t)m[5] << 16) | ((uint32_t)m[6] << 8) | m[7];
         if (sub == 0x00 && cued_) {
-            // Start timeline: the value is where the deck's timeline stands now (parked position minus the start
-            // delay). The timeline advances one frame per frame; the deck rolls when it reaches the parked position.
+            // Start timeline: where the edit timeline stands now (a few frames before the parked decks). It
+            // advances one frame per frame; the deck rolls when it reaches the deck's parked timeline position.
             synced_ = true; timeline_ = (double)v;
-            LOGI("IDC %s (vtr): start timeline %u, rolls in %.0f frames\n", label.c_str(), v, pos_ - timeline_);
+            LOGI("IDC %s (vtr): start timeline %u, rolls in %.0f frames\n", label.c_str(), v, timeline_pos() - timeline_);
         }
         if (sub == 0x05) edit_in_ = v;                   // this deck's in point (sent twice)
         else if (sub == 0x01) rec_in_ = v;               // recorder in point (sent twice)

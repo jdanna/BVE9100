@@ -46,12 +46,20 @@ virtual tape starts at 01:00:00:00.
   (for example A = P1, V = PLAY, Z = REW, X = FF, C = STILL, Space = ALL STOP). F1-F8 are F1-F8, F9-F12 are
   PF1-PF4, Esc is INIT, Enter is ENTER, Backspace and Home are RET, Page Up and Page Down are YES, Delete is
   NO, Tab is FS. Shift+F1-F10 are the source keys R, P1-P6, AUX1, AUX2 and BLACK. Shift+digit and Ctrl+key
-  give the top and bottom legends (Ctrl+3 = STOR ED).
+  give the top and bottom legends (Ctrl+3 = STOR ED). The on-screen key goes down while you hold its key.
 * The lamps on the keyboard follow the editor: the selected source (R, P1-P6, AUX, BLACK), the audio
   channels A1-A4 and the dial mode.
 * The search dial: press **JOG**, **SHTL** or **DMC**, then drag the dial around (or scroll over it). In
   shuttle, the further you turn from where you started, the faster the deck winds; turn back to stop. The
   SEARCH LED strip above the dial shows how far it is turned, and the REVERSE / FORWARD lamps the direction.
+
+## Screen colours
+
+**Palette** (top right) opens the editor's 16-colour VDU palette, the one INIT > LAYOUT > CHG DATA > PALETTE
+sets. Pick colours, or load a preset (the Sony factory palette or one of Tuesday's colour schemes), and the screen
+previews them. **Inject into SRAM** writes them into the editor's setup database and the editor uses them
+straight away; stop the emulator with Ctrl-C to keep them in `work/run/sram.bin`. Colour 0 draws the frame lines
+and colour 8 is the screen background; which colour each part of the screen uses is set under INIT > LAYOUT.
 
 ## Editing
 
@@ -75,6 +83,8 @@ curl http://127.0.0.1:8090/devices                               # state of ever
 curl -X POST -d play  http://127.0.0.1:8090/devices/B            # put P1 (port B) in play
 curl -X POST -d "cue 108000" http://127.0.0.1:8090/devices/B     # cue to frame 108000 (01:00:00:00)
 curl -X POST -d +20   http://127.0.0.1:8090/dial                 # turn the search dial
+curl http://127.0.0.1:8090/palette                               # VDU colour palette (16 x 6-bit r g b)
+curl -X POST -d "63 63 63  63 0 0 ..." http://127.0.0.1:8090/palette   # inject 48 values into SRAM
 ```
 
 ## More

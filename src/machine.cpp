@@ -352,6 +352,35 @@ void Machine::run() {
                 if (!bytes.empty()) { dsc->keyboard.deliver(bytes); LOGD("HTTP: key bytes delivered (%zu)\n", bytes.size()); }
                 resp.body = "ok";
             }
+            // Colour palette of the editor's VDU (INIT > LAYOUT > PALETTE): 16 entries x [r, g, b, 0], 6-bit values,
+            // in the !BUPDB setup database at SRAM 0x807020 (no checksum covers it). GET returns it; POST with 48
+            // numbers (r g b for colours 0-15) writes it there, replaces every copy of the old palette the running
+            // application holds in DRAM (it keeps several and would otherwise write one back), and loads the
+            // display's palette registers so the change shows at once.
+            else if (r.path == "/palette") {
+                auto& sd = sram->data();
+                const uint32_t PAL = 0x7020;
+                if (r.method == "POST") {
+                    std::vector<int> v; std::istringstream ss(r.body); std::string tok;
+                    while (ss >> tok) { for (char& ch : tok) if (ch == ',') ch = ' '; std::istringstream t(tok); int x; while (t >> x) v.push_back(x); }
+                    if (v.size() != 48) { resp.status = 400; resp.body = "need 48 values (r g b x 16, 0-63)"; return resp; }
+                    std::vector<uint8_t> old(sd.begin() + PAL, sd.begin() + PAL + 64), now(64, 0);
+                    for (int i = 0; i < 16; i++) for (int k = 0; k < 3; k++) now[i * 4 + k] = (uint8_t)std::clamp(v[i * 3 + k], 0, 63);
+                    int copies = 0;
+                    auto& dd = dram->data();
+                    for (size_t i = 0; i + 64 <= dd.size(); i++)
+                        if (dd[i] == old[0] && std::equal(old.begin(), old.end(), dd.begin() + i)) { std::copy(now.begin(), now.end(), dd.begin() + i); copies++; i += 63; }
+                    std::copy(now.begin(), now.end(), sd.begin() + PAL);
+                    for (int i = 0; i < 16; i++) dsc->set_palette(i, now[i * 4], now[i * 4 + 1], now[i * 4 + 2]);
+                    LOGI("HTTP: palette injected (SRAM + %d DRAM copies)\n", copies);
+                }
+                std::string j = "{\"pal\":[";
+                for (int i = 0; i < 16; i++) {
+                    char b[32]; snprintf(b, sizeof b, "%s[%u,%u,%u]", i ? "," : "", sd[PAL + i * 4], sd[PAL + i * 4 + 1], sd[PAL + i * 4 + 2]);
+                    j += b;
+                }
+                resp.type = "application/json"; resp.body = j + "]}";
+            }
             else { resp.status = 404; resp.body = "unknown endpoint"; }
             return resp;
         };

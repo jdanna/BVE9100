@@ -41,6 +41,10 @@ public:
     bool screen_dirty = false;
     uint8_t kbd_type = 0x43;                 // value answered to the keyboard 'R','Z' request (type/version byte)
     uint8_t keyboard_read_reg(uint8_t reg);
+    // Load one colour (6-bit r, g, b) into the palette registers as the application does: main palette entry
+    // (0x1C800 + 16 i) = [colour, half, reverse, reverse] with half = c / 2 and reverse = 63 - c; overlay palette
+    // entry (0x1C900 + 4 i) = colour, except entry 0, which is the overlay's transparent colour.
+    void set_palette(int i, uint8_t r, uint8_t g, uint8_t b);
 private:
     std::vector<uint8_t> vram_, plane2_;
     uint8_t regs_[0x800] = {0};

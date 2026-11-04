@@ -55,7 +55,11 @@ protected:
     struct Event { uint32_t frame; uint8_t action; bool done = false; };
     std::vector<Event> events_;
     uint32_t edit_in_ = 0, rec_in_ = 0, rec_out_ = 0, rec_end_ = 0, preroll_ = 150;
+    // Edit timeline: counted in the recorder's timecode. A deck at pos_ stands at pos_ - edit_in_ + rec_in_ on it
+    // (each deck gets its own in point with 40 05 and the recorder's with 40 01), so decks parked one pre-roll
+    // before their in points all sit at the same timeline position and roll together.
     double timeline_ = 0;
+    double timeline_pos() const { return pos_ - (double)edit_in_ + (double)rec_in_; }
 };
 
 // Virtual video switcher behind a SW'ER IDC (IDC type 0x1xxx). Keeps crosspoint / transition / memory state

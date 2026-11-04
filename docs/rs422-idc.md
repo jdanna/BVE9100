@@ -127,10 +127,15 @@ Message flow for one edit (R recorder, P1 player):
 2. Recorder only: `41 01 <frame> <action>` timed events (10 = ?, 12 = record on at the in point, 11 = record
    off at the out point).
 3. `22 14 00 08`: cue to in point minus pre-roll; AUTOX waits for phase 2 / code 10 ("parked").
-4. `60 03`: data reply `70 03` + 4 bytes (current position as a frame count). Without a data reply AUTOX
-   reports CANNOT EXECUTE. The `60 xx` / `70 xx` reply sizes come from a table in CMNDB (0xD002E3A6).
-5. `40 00 <start timeline>`: the value is the deck's position minus a few frames. The IDC counts it up one per
-   frame and rolls the deck when it reaches the parked position; AUTOX waits for phase 3 / code 14 first.
+4. `60 03`: data reply `70 03` + 4 bytes: the deck's position on the edit timeline as a frame count. The
+   timeline is counted in the recorder's timecode, so a deck at tape position p stands at
+   p - (its in point, `40 05`) + (recorder in, `40 01`); parked decks all report the same value. Answering the
+   raw tape position only works while source and recorder in points are equal: otherwise AUTOX counts the
+   timeline in the player's timecode and waits for the recorder to roll that much later. Without a data reply
+   AUTOX reports CANNOT EXECUTE. The `60 xx` / `70 xx` reply sizes come from a table in CMNDB (0xD002E3A6).
+5. `40 00 <start timeline>`: the same value for every deck, the timeline position minus a few frames. The IDC
+   counts it up one per frame and rolls the deck when it reaches the deck's parked timeline position (so all
+   decks roll together); AUTOX waits for phase 3 / code 14 first.
 6. Rolling: phase 4 / code 14. The editor's own clock runs the edit (one tick per frame, see below) and sends
    `23 01` at the end of the post-roll; the deck stops and keeps reporting phase 4 / 14 ("ended").
 7. `23 00` releases the decks (idle); `60 02` / `60 04` are read; STOP follows. `23 00` during a roll (ALL STOP)

@@ -71,6 +71,10 @@ Items marked *(assumed)* are emulator choices that the firmware tolerates but th
   Used for pop-up windows, colour swatches and selection highlights.
 * Main palette at `1C800`: 16 entries x 16 bytes = four 6-bit RGB triples (colour, half, reverse, reverse).
   Overlay palette at `1C900`: 16 x 4 bytes. Both are loaded by the application; boot screens use defaults.
+  The application builds them from the VDU colour palette in the `!BUPDB` setup database at SRAM `0x807020`
+  (16 x [r, g, b, 0], 6-bit; no checksum covers it): main entry = [c, c/2, 63-c, 63-c], overlay entry = c (entry 0
+  stays transparent). The running application also keeps copies of those 64 bytes in DRAM. The 16-step grey ramp
+  just before it (`0x806FE0`) is presumably the B/W VDU's.
 * Colour order (DIAG): BLACK, RED, GREEN, YELLOW, BLUE, MAGENTA, CYAN, WHITE, DARK GREEN, ASH BLUE,
   VERMILION, PALE PINK, MOSS GREEN, LIGHT BLUE, BRIGHT YELLOW, GRAY. The application loads colour 0 as white
   (frame lines) and uses colour 8 (very dark green) as the screen background.
