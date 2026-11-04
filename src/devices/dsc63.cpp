@@ -170,7 +170,7 @@ std::string Dsc63::screen_json() const {
         out += "]";
     }
     out += "],\"ov\":[" + ov + "]";
-    { char b[96]; snprintf(b, sizeof b, ",\"lamps\":{\"src\":%d,\"audio\":%d,\"dial\":%d}", lamp_src_, lamp_audio_, dial_mode_); out += b; }
+    { char b[128]; snprintf(b, sizeof b, ",\"lamps\":{\"src\":%d,\"audio\":%d,\"dial\":%d,\"count\":%d}", lamp_src_, lamp_audio_, dial_mode_, dial_); out += b; }
     char tail[128]; snprintf(tail, sizeof tail, ",\"cursor\":%u,\"ctl\":%u", (unsigned)(((regs_[0x1A0] << 8) | regs_[0x1A1])), (unsigned)((regs_[0x1C0] << 8) | regs_[0x1C1]));
     out += tail;
     auto c8 = [](uint8_t v) { return (unsigned)((v & 0x3F) * 255 / 63); };

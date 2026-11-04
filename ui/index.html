@@ -43,7 +43,11 @@
   .dial .cap { position:absolute; left:50%; top:50%; width:46px; height:46px; margin:-23px 0 0 -23px; border-radius:50%; background: radial-gradient(circle at 40% 35%, #444, #151515 75%); }
   .dialinfo { text-align:center; color:#888; font-size:11px; margin-top:-2px; }
   .ledbar { width:150px; height:34px; background:#111; border-radius:3px; margin:4px auto; color:#ccc; font-size:9px; text-align:center; padding-top:3px; }
-  .ledbar i { display:inline-block; width:4px; height:4px; margin:1px; background:#2c2; }
+  .ledbar i { display:inline-block; width:4px; height:4px; margin:1px; background:#143a14; }
+  .ledbar i.on { background:#3f3; box-shadow:0 0 3px #3f3; }
+  .ledbar .dirs { font-size:7px; display:flex; justify-content:space-between; align-items:center; padding:0 6px; margin-top:1px; }
+  .ledbar .dir { display:inline-block; width:8px; height:4px; border-radius:1px; background:#3a1a12; vertical-align:middle; margin:0 3px; }
+  .ledbar .dir.on { background:#ff4a24; box-shadow:0 0 5px 1px #ff6a3c; }
 </style>
 </head>
 <body>
@@ -56,7 +60,7 @@
     <div class="block" id="main"></div>
     <div class="block" id="right"></div>
     <div class="block" id="far">
-      <div class="ledbar">SEARCH<br><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><br><span style="font-size:7px">◀◀ REVERSE &nbsp;&nbsp; FORWARD ▶▶</span></div>
+      <div class="ledbar">SEARCH<br><span id="searchleds"></span><div class="dirs"><span><b class="dir" id="ledrev"></b>◀◀ REVERSE</span><span>FORWARD ▶▶<b class="dir" id="ledfwd"></b></span></div></div>
       <div class="row" id="dialkeys"></div>
       <div class="dial" id="dial" title="search dial: drag around (or use the mouse wheel); SHTL / JOG / DMC select the mode"><div class="mark"></div><div class="cap"></div></div>
       <div class="dialinfo" id="dialinfo"></div>
@@ -163,6 +167,28 @@ function updateLamps(l){
     if('src' in m) on=l.src===m.src; else if('audio' in m) on=!!(l.audio&(1<<m.audio)); else if('dial' in m) on=l.dial===m.dial;
     e.classList.toggle('lit',on); });
   const info=document.getElementById('dialinfo'); if(info) info.textContent=['SHTL','JOG','DMC',''][l.dial]??'';
+  searchLeds(l);
+}
+// Search LED strip above the dial: follows the keyboard's dial counter. SHTL: a bar from the centre LED
+// towards the side the dial is turned, longer the further it is turned (SHTL_FULL counts = whole half),
+// with the REVERSE / FORWARD lamp for the direction. JOG / DMC: a dot that walks with the dial and the
+// direction lamp of the last movement. Dial off: dark.
+const NLED=15, MID=7, SHTL_FULL=60;
+const ledEls=[]; { const box=document.getElementById('searchleds'); for(let i=0;i<NLED;i++){ const e=document.createElement('i'); box.appendChild(e); ledEls.push(e); } }
+let lastCount=null, lastDir=0, lastMove=0;
+function searchLeds(l){
+  const c=l.count??0, now=Date.now(); let on=new Array(NLED).fill(false), dir=0;
+  if(lastCount!==null && c!==lastCount){ lastDir=Math.sign(c-lastCount); lastMove=now; }
+  lastCount=c;
+  if(l.dial===0){
+    const n=Math.min(MID, Math.ceil(Math.abs(c)*MID/SHTL_FULL)); dir=Math.sign(c);
+    on[MID]=true; for(let i=1;i<=n;i++) on[MID+dir*i]=true;
+  } else if(l.dial===1 || l.dial===2){
+    on[((MID+c)%NLED+NLED)%NLED]=true; if(now-lastMove<400) dir=lastDir;
+  }
+  ledEls.forEach((e,i)=>e.classList.toggle('on',on[i]));
+  document.getElementById('ledrev').classList.toggle('on',dir<0);
+  document.getElementById('ledfwd').classList.toggle('on',dir>0);
 }
 let shift=false, ctrl=false;
 function mk(k){
@@ -212,7 +238,9 @@ const DIAL_COUNTS=120;
 function log(s){ /* key traffic is not shown in the UI */ }
 async function send(hex){ log('key '+hex); try{ await fetch('/key',{method:'POST',body:hex}); }catch(e){ log('send failed: '+e); } }
 // physical keyboard -> wire codes
-const FK={F1:'F1',F2:'F2',F3:'F3',F4:'F4',F5:'F5',F6:'F6',F7:'F7',F8:'F8',F9:'PF1',F10:'PF2',F11:'PF3',F12:'PF4',Enter:'ENTER',Backspace:'BS',Tab:'FS',Escape:'INIT',ArrowUp:'CURSOR UP',ArrowDown:'CURSOR DOWN',ArrowLeft:'CURSOR LEFT',ArrowRight:'CURSORRIGHT',Home:'RET',PageUp:'YES',PageDown:'NO',Delete:'CLR 1'};
+const FK={F1:'F1',F2:'F2',F3:'F3',F4:'F4',F5:'F5',F6:'F6',F7:'F7',F8:'F8',F9:'PF1',F10:'PF2',F11:'PF3',F12:'PF4',Enter:'ENTER',Backspace:'RET',Tab:'FS',Escape:'INIT',ArrowUp:'CURSOR UP',ArrowDown:'CURSOR DOWN',ArrowLeft:'CURSOR LEFT',ArrowRight:'CURSORRIGHT',Home:'RET',PageUp:'YES',PageDown:'YES',Delete:'NO'};
+// Shift+F1..F10: the source select keys of the top row (R, P1-P6, AUX1, AUX2, BLACK)
+const SHIFT_FK={F1:'MONI-R',F2:'MONI-P1',F3:'MONI-P2',F4:'MONI-P3',F5:'MONI-P4',F6:'MONI-P5',F7:'MONI-P6',F8:'MONI-AUX1',F9:'MONI-AUX2',F10:'MONI-BLACK'};
 const PHYS_SHIFT={'1':'LOAD EDL','2':'SAVE EDL','3':'MOD EDL','4':'CRCT','5':'INSRT','6':'DEL','7':'MOVE','8':'NOTE','9':'LAST EDIT','0':'RECALL'};
 const PHYS_CTRL={'3':'STOR ED','4':'APPEND','7':'COPY','0':'RECAL SCROL','e':'REC','t':'PREROLL','y':'BAK AUX','u':'1ST - ED','i':'PREREAD','q':'P-LEARN','w':'S QUICK PVW','a':'P7','s':'P8','d':'P9','f':'P10','g':'P11','h':'P12','k':'SY-TIME','z':'FREEZE-OFF','x':'FREEZE-ON','c':'STANDBY OFF','v':'MEM PLAY','b':'EJECT','n':'TRACK SCROL','m':'MRK SPD',',':'LAST MARK','.':'MULTI-SCRPD','/':'RECAL SEGMT','p':'CTL+CUT',' ':'CTL+ALLSTOP',Enter:'CTL+ENTER',ArrowUp:'CTL+UP',ArrowDown:'CTL+DOWN',ArrowLeft:'CTL+LEFT',ArrowRight:'CTL+RIGHT'};
 document.addEventListener('keydown',e=>{
@@ -222,6 +250,7 @@ document.addEventListener('keydown',e=>{
   else if(e.ctrlKey && PHYS_CTRL[e.key.toLowerCase()]) code=WIRE[PHYS_CTRL[e.key.toLowerCase()]];
   else if(e.ctrlKey && /^F[1-8]$/.test(e.key)) code=WIRE['CTL+'+e.key];
   else if(e.shiftKey && PHYS_SHIFT[e.key]) code=WIRE[PHYS_SHIFT[e.key]];
+  else if(e.shiftKey && SHIFT_FK[e.key]) code=WIRE[SHIFT_FK[e.key]];
   else if(FK[e.key]) code=WIRE[FK[e.key]];
   else if(e.key.length===1 && e.key.charCodeAt(0)>=0x20 && e.key.charCodeAt(0)<0x7f) code=e.key.charCodeAt(0).toString(16);
   if(code){ e.preventDefault(); send(code); }

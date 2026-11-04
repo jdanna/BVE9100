@@ -44,12 +44,14 @@ virtual tape starts at 01:00:00:00.
   on a key is its SHIFT function, the bottom legend its CTRL function. Hover a key to see what it sends.
 * Your computer keyboard works too: letters, digits and Space act like the same position on the Sony keyboard
   (for example A = P1, V = PLAY, Z = REW, X = FF, C = STILL, Space = ALL STOP). F1-F8 are F1-F8, F9-F12 are
-  PF1-PF4, Esc is INIT, Enter is ENTER, Home is RET, Page Up / Page Down are YES / NO, Backspace and Tab are
-  BS and FS. Shift+digit and Ctrl+key give the top and bottom legends (Ctrl+3 = STOR ED).
+  PF1-PF4, Esc is INIT, Enter is ENTER, Backspace and Home are RET, Page Up and Page Down are YES, Delete is
+  NO, Tab is FS. Shift+F1-F10 are the source keys R, P1-P6, AUX1, AUX2 and BLACK. Shift+digit and Ctrl+key
+  give the top and bottom legends (Ctrl+3 = STOR ED).
 * The lamps on the keyboard follow the editor: the selected source (R, P1-P6, AUX, BLACK), the audio
   channels A1-A4 and the dial mode.
 * The search dial: press **JOG**, **SHTL** or **DMC**, then drag the dial around (or scroll over it). In
-  shuttle, the further you turn from where you started, the faster the deck winds; turn back to stop.
+  shuttle, the further you turn from where you started, the faster the deck winds; turn back to stop. The
+  SEARCH LED strip above the dial shows how far it is turned, and the REVERSE / FORWARD lamps the direction.
 
 ## Editing
 
