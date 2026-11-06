@@ -90,6 +90,21 @@
   .ledbar .dirs { font-size:7px; display:flex; justify-content:space-between; align-items:center; padding:0 6px; margin-top:1px; }
   .ledbar .dir { display:inline-block; width:8px; height:4px; border-radius:1px; background:#3a1a12; vertical-align:middle; margin:0 3px; }
   .ledbar .dir.on { background:#ff4a24; box-shadow:0 0 5px 1px #ff6a3c; }
+  /* Phones and tablets (body.mobile, set by layout() for a touch screen; a desktop browser never gets it): the screen fills its pane edge to edge, the keyboard
+     keeps a size its legends can be read at (a key about a fingertip wide) and swipes sideways instead of shrinking
+     to fit, and the search dial is left out. In landscape the screen and keyboard sit side by side. */
+  #kbdwrap { flex:none; }
+  body.mobile #screenwrap { padding:0; }
+  body.mobile canvas#screen { border:0; border-radius:0; }
+  body.mobile #kbdwrap { overflow-x:auto; overflow-y:hidden; scrollbar-width:none; overscroll-behavior-x:contain; }
+  body.mobile #kbdwrap::-webkit-scrollbar { display:none; }
+  body.mobile #kbd { margin:0; border-radius:0; }
+  body.mobile #kbd .brand { display:none; }
+  body.mobile #far, body.mobile #fkmode { display:none; }
+  body.mobile .key { touch-action:manipulation; -webkit-tap-highlight-color:transparent; }
+  body.mobile.landscape { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); grid-template-rows:auto minmax(0,1fr); }
+  body.mobile.landscape #top { grid-column:1 / -1; }
+  body.mobile.landscape #kbdwrap { align-self:center; }
 </style>
 </head>
 <body>
@@ -106,7 +121,7 @@
   <div id="palstatus"></div>
 </div>
 <div id="screenwrap"><canvas id="screen" width="960" height="580"></canvas></div>
-<div id="kbd">
+<div id="kbdwrap"><div id="kbd">
   <div class="brand"><span>SONY</span><span>BVE-9100 SYSTEM</span></div>
   <div class="blocks">
     <div class="block" id="left"></div>
@@ -119,7 +134,7 @@
       <div class="dialinfo" id="dialinfo"></div>
     </div>
   </div>
-</div>
+</div></div>
 <script>
 // ---------------------------------------------------------------------------------------------
 // Keyboard layout (BKE-9400A, transcribed from photos).
@@ -392,27 +407,56 @@ const SW=960, SH=580;
 // right against the edge of the picture (in native pixels: OX left/right, OY top/bottom)
 const OX=10, OY=10;
 let lastScr=null, previewPal=null;   // previewPal: palette editor preview (6-bit RGB x 16) or null
+// Mobile layout (see the body.mobile styles): a touch screen. A desktop browser keeps the full keyboard at any size.
+const COARSE=window.matchMedia('(pointer: coarse)');
+let lastKz=0;   // the keyboard's zoom at the last layout (0: not the mobile layout)
 function layout(){
-  // keyboard: natural size, shrunk only if it does not fit the window width or would take over 60% of the height
-  const kbd=document.getElementById('kbd');
+  const W=window.innerWidth, H=window.innerHeight, mobile=COARSE.matches;
+  document.body.classList.toggle('mobile', mobile);
+  document.body.classList.toggle('landscape', mobile && W>H);
+  const kbd=document.getElementById('kbd'), kwrap=document.getElementById('kbdwrap');
   kbd.style.zoom=1;
   const kw=kbd.offsetWidth, kh=kbd.offsetHeight;
-  const kz=Math.min(1, (window.innerWidth-20)/kw, 0.6*window.innerHeight/kh);
+  let kz;
+  if(mobile){
+    // natural size at most, smaller only to fit the height it has: the space under the full-width screen
+    // (portrait) or its pane (landscape); never fitted to the width, it scrolls sideways instead
+    const top=document.getElementById('top').offsetHeight;
+    const room=W>H ? H-top : H-top-W*(SH+2*OY)/(SW+2*OX);
+    kz=Math.min(1, Math.max(0.5, room/kh));
+  } else {
+    // natural size, shrunk only if it does not fit the window width or would take over 60% of the height
+    kz=Math.min(1, (W-20)/kw, 0.6*H/kh);
+  }
   kbd.style.zoom=kz;
-  // screen: largest SW:SH box inside the wrap (minus padding and the 6px border)
-  const wrap=document.getElementById('screenwrap');
-  const aw=wrap.clientWidth-20-12, ah=wrap.clientHeight-20-12;
+  // whenever the mobile keyboard is laid out afresh (a new size), start it at its main block (the left block is a
+  // swipe away)
+  if(mobile && kz!==lastKz){ const m=document.getElementById('main');
+    kwrap.scrollLeft=m.getBoundingClientRect().left-kwrap.getBoundingClientRect().left+kwrap.scrollLeft; }
+  if(!mobile) kwrap.scrollLeft=0;
+  lastKz=mobile ? kz : 0;
+  // screen: largest SW:SH box inside the wrap (minus its padding and the canvas border)
+  const wrap=document.getElementById('screenwrap'), ws=getComputedStyle(wrap), cs=getComputedStyle(cv);
+  const aw=wrap.clientWidth-parseFloat(ws.paddingLeft)-parseFloat(ws.paddingRight)-parseFloat(cs.borderLeftWidth)-parseFloat(cs.borderRightWidth);
+  const ah=wrap.clientHeight-parseFloat(ws.paddingTop)-parseFloat(ws.paddingBottom)-parseFloat(cs.borderTopWidth)-parseFloat(cs.borderBottomWidth);
   const k=Math.max(0.1, Math.min(aw/(SW+2*OX), ah/(SH+2*OY))), dpr=window.devicePixelRatio||1;
   // Whole device pixels per cell, so every cell edge lands on a pixel boundary; with a fractional
   // scale the per-cell background fills leave anti-aliased seams (a faint grid) between characters.
-  const cw=Math.max(1, Math.floor(CW*k*dpr)), ch=Math.max(1, Math.floor(CH*k*dpr));
+  // On a phone, rounding down would leave the screen short of its pane by up to a pixel a cell, so the cells are
+  // rounded up instead and the picture scaled down by the browser to fill the pane exactly (at a phone's pixel
+  // density that costs no sharpness).
+  const round=mobile ? Math.ceil : Math.floor;
+  const cw=Math.max(1, round(CW*k*dpr)), ch=Math.max(1, round(CH*k*dpr));
   const mx=Math.round(cw*OX/CW), my=Math.round(ch*OY/CH);
   cv.width=cw*SW/CW+2*mx; cv.height=ch*SH/CH+2*my;
-  cv.style.width=(cv.width/dpr)+'px'; cv.style.height=(cv.height/dpr)+'px';
+  if(mobile){ cv.style.width=(k*(SW+2*OX))+'px'; cv.style.height=(k*(SH+2*OY))+'px'; }
+  else { cv.style.width=(cv.width/dpr)+'px'; cv.style.height=(cv.height/dpr)+'px'; }
   ctx.setTransform(cw/CW,0,0,ch/CH,mx,my);
   if(lastScr) render(lastScr);
 }
-window.addEventListener('resize',layout);
+// (also on any change of the page's size: a phone can report its final size only after the page has loaded)
+window.addEventListener('resize',layout); COARSE.addEventListener('change',layout);
+new ResizeObserver(()=>layout()).observe(document.documentElement);
 // DIAG order: BLACK RED GREEN YELLOW BLUE MAGENTA CYAN WHITE, DARK GREEN, ASH BLUE, VERMILION, PALE PINK,
 // MOSS GREEN, LIGHT BLUE, BRIGHT YELLOW, GRAY
 const DEFPAL=['#ffffff','#ff2020','#20e020','#e0e020','#2040ff','#e020e0','#20e0e0','#e6e6e6','#003311','#4477aa','#ee5522','#ffbbcc','#557722','#88ccff','#ffff55','#777777'];

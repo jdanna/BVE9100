@@ -103,3 +103,6 @@
 #top #webspeed { font-size: 10px; color: #999; font-family: 'SF Mono', 'Cascadia Code', Consolas, monospace; }
 #top #maxinelink { font-size: 10px; color: #999; text-decoration: none; white-space: nowrap; }
 #top #maxinelink:hover { color: #e8e8e8; }
+/* Phones: the bar stays one line (the name never wraps; the link to MAXINE! gives way on the narrowest) */
+#top b, #top button { white-space: nowrap; flex: none; }
+@media (max-width: 480px) { #top #maxinelink { display: none; } }
