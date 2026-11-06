@@ -3,7 +3,7 @@
 //
 //   index.html        ui/index.html with the landing page (web/landing.html, with web/CHANGELOG.md in it), its
 //                     styles (web/web.css) and web/web.js loaded before the front-end's script
-//   web.js worker.js  the page glue and the worker that runs the emulator (web/), icon.svg, assets/
+//   web.js worker.js  the page glue and the worker that runs the emulator (web/), icon.svg, favicon.ico, assets/
 //   emulator/         bve9100.js + .wasm (Emscripten build in build-web/), the default machine from web/defaults/
 //                     gzipped, and manifest.json naming them with a hash of the defaults (a browser drops its saved
 //                     machine when that changes)
@@ -42,7 +42,7 @@ for (const f of ['bve9100.js', 'bve9100.wasm']) copyFileSync(join(BUILD, f), joi
 // The page's own files go by a version (?v=hash of the file) so no browser runs a stale copy, whatever the server's
 // caching (a server that sends no Cache-Control lets Firefox keep files across restarts)
 const version = (path) => createHash('sha256').update(readFileSync(path)).digest('hex').slice(0, 10);
-for (const f of ['worker.js', 'web.css', 'icon.svg']) copyFileSync(join(ROOT, 'web', f), join(SITE, f));
+for (const f of ['worker.js', 'web.css', 'icon.svg', 'favicon.ico']) copyFileSync(join(ROOT, 'web', f), join(SITE, f));
 const workerV = version(join(SITE, 'worker.js'));
 writeFileSync(join(SITE, 'web.js'), readFileSync(join(ROOT, 'web/web.js'), 'utf8').replace("new Worker('worker.js')", `new Worker('worker.js?v=${workerV}')`));
 cpSync(join(ROOT, 'web/assets'), join(SITE, 'assets'), { recursive: true });
@@ -61,9 +61,13 @@ for (const raw of readFileSync(join(ROOT, 'web/CHANGELOG.md'), 'utf8').split('\n
 }
 if (inList) changelog += '</ul>';
 
+// Unfurlers (Slack and the like) show the site's icon beside the title, but not an SVG one: they take the PNGs
+// (web/assets/icon-32.png, apple-touch-icon.png) or favicon.ico, all rendered from web/icon.svg
 const HEAD = `<title>BVE-9100 Emulator — Retrograde Labs</title>
 <meta name="description" content="The Sony BVE-9100, emulated in full and running in your browser.">
 <link rel="icon" type="image/svg+xml" href="icon.svg">
+<link rel="icon" type="image/png" sizes="32x32" href="assets/icon-32.png">
+<link rel="apple-touch-icon" sizes="180x180" href="assets/apple-touch-icon.png">
 <link rel="stylesheet" href="web.css?v=${version(join(SITE, 'web.css'))}">`;
 const landing = readFileSync(join(ROOT, 'web/landing.html'), 'utf8').replace('<!--CHANGELOG-->', changelog);
 const splice = (page, find, make) => {
