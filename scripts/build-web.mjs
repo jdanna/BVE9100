@@ -63,8 +63,9 @@ if (inList) changelog += '</ul>';
 
 // Unfurlers (Slack and the like) show the site's icon beside the title, but not an SVG one: they take the PNGs
 // (web/assets/icon-32.png, apple-touch-icon.png) or favicon.ico, all rendered from web/icon.svg. The thumbnail
-// beside the text is og:image (icon-512.png; an absolute URL, as unfurlers want), small because the card is "summary"
-const ICON_URL = `https://bve.retrograde.tools/assets/icon-512.png?v=${version(join(ROOT, 'web/assets/icon-512.png'))}`;
+// beside the text is og:image (rec-key-512.png, rendered from web/assets/rec-key.svg, the full key with all its
+// legends that the landing page shows; an absolute URL, as unfurlers want), small because the card is "summary"
+const ICON_URL = `https://bve.retrograde.tools/assets/rec-key-512.png?v=${version(join(ROOT, 'web/assets/rec-key-512.png'))}`;
 const HEAD = `<title>BVE-9100 Emulator — Retrograde Labs</title>
 <meta name="description" content="The Sony BVE-9100, emulated in full and running in your browser.">
 <meta property="og:title" content="BVE-9100 Emulator">
